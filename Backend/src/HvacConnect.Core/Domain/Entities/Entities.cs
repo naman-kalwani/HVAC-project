@@ -340,7 +340,8 @@ public class VendorOnboardingChecklist
     public int VendorId { get; set; }
     public Vendor? Vendor { get; set; }
 
-    public string Phase { get; set; } = "Phase1"; // Phase1 or Phase2
+    public string? TaskCode { get; set; }
+    public string Phase { get; set; } = "Phase 1";
     public string TaskDescription { get; set; } = string.Empty;
     public int SortOrder { get; set; }
     public bool IsCompleted { get; set; }

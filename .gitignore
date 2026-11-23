@@ -1,3 +1,32 @@
 Backend/src/HvacConnect.ConsoleApp/appsettings.json
 
 Context
+
+# .NET build and test output
+**/bin/
+**/obj/
+**/publish/
+**/TestResults/
+*.user
+*.suo
+*.cache
+*.pdb
+
+# JavaScript packages and build output
+**/node_modules/
+**/dist/
+**/build/
+**/coverage/
+**/.next/
+
+# Logs and temporary files
+*.log
+*.tmp
+*.temp
+*.bak
+
+# IDE and operating system files
+.vs/
+.idea/
+.DS_Store
+Thumbs.db

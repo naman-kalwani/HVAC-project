@@ -176,18 +176,14 @@ public static partial class Program
             PrimaryContactEmail = email,
             PrimaryContactPhone = phone,
             Status = VendorStatus.Active,
-            OnboardingPhase = OnboardingPhase.Discovery,
+            OnboardingPhase = OnboardingPhase.Phase1_Coexist,
             IsActive = true
         };
 
         db.Vendors.Add(vendor);
 
         db.VendorOnboardingChecklists.AddRange(
-            new VendorOnboardingChecklist { Vendor = vendor, Phase = "Phase1", TaskDescription = "Initial intake questionnaire completed", SortOrder = 1, IsCompleted = true },
-            new VendorOnboardingChecklist { Vendor = vendor, Phase = "Phase1", TaskDescription = "Customer and Location CSV import executed", SortOrder = 2, IsCompleted = false },
-            new VendorOnboardingChecklist { Vendor = vendor, Phase = "Phase1", TaskDescription = "Duplicate resolution review complete", SortOrder = 3, IsCompleted = false },
-            new VendorOnboardingChecklist { Vendor = vendor, Phase = "Phase1", TaskDescription = "Field technician roster verified and invited", SortOrder = 4, IsCompleted = false }
-        );
+            VendorOnboardingChecklistService.CreateInitialTasks(vendor, _currentUser!.Id));
 
         using var transaction = await db.Database.BeginTransactionAsync();
         try

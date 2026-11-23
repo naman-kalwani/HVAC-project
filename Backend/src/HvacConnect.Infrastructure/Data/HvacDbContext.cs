@@ -296,6 +296,7 @@ public class HvacDbContext : DbContext
         {
             b.ToTable("vendor_onboarding_checklists");
             b.HasKey(c => c.Id);
+            b.Property(c => c.TaskCode).HasMaxLength(50);
 
             b.HasOne(c => c.Vendor)
                 .WithMany(v => v.Checklists)

@@ -11,6 +11,7 @@ public static class DatabaseSeeder
     public static async Task SeedAsync(HvacDbContext db)
     {
         await db.Database.EnsureCreatedAsync();
+        await VendorOnboardingChecklistService.EnsureSchemaAndTemplatesAsync(db);
 
         // Check if already seeded
         if (await db.Users.AnyAsync()) return;
@@ -198,11 +199,8 @@ public static class DatabaseSeeder
         db.TicketComments.Add(comment);
 
         // 10. Seed Onboarding Checklists
-        var chk1 = new VendorOnboardingChecklist { VendorId = vendor.Id, Phase = "Phase1", TaskDescription = "Initial intake questionnaire completed", SortOrder = 1, IsCompleted = true };
-        var chk2 = new VendorOnboardingChecklist { VendorId = vendor.Id, Phase = "Phase1", TaskDescription = "Customer and Location CSV import executed", SortOrder = 2, IsCompleted = true };
-        var chk3 = new VendorOnboardingChecklist { VendorId = vendor.Id, Phase = "Phase1", TaskDescription = "Duplicate resolution review complete", SortOrder = 3, IsCompleted = false };
-        var chk4 = new VendorOnboardingChecklist { VendorId = vendor.Id, Phase = "Phase1", TaskDescription = "Field technician roster verified and invited", SortOrder = 4, IsCompleted = true };
-        db.VendorOnboardingChecklists.AddRange(chk1, chk2, chk3, chk4);
+        db.VendorOnboardingChecklists.AddRange(
+            VendorOnboardingChecklistService.CreateInitialTasks(vendor, admin.Id));
 
         await db.SaveChangesAsync();
 

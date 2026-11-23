@@ -118,6 +118,7 @@ internal static class VendorImportPipeline
         job.Status = duplicates == 0 ? ImportJobStatus.Committed : ImportJobStatus.DuplicateReview;
         if (duplicates == 0) job.CompletedAt = DateTime.UtcNow;
         await db.SaveChangesAsync();
+        await VendorOnboardingChecklistService.RefreshAutomaticMilestonesAsync(db, vendor.Id, actor.Id);
         success($"{job.JobCode} — {vendor.BrandName} / {type} / {job.OriginalFileName}: {rows.Count} rows, {duplicates} duplicates, {warnings} warnings, {errors} errors.");
         return true;
     }
