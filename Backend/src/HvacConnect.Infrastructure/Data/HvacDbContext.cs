@@ -5,6 +5,8 @@ namespace HvacConnect.Infrastructure.Data;
 
 public class HvacDbContext : DbContext
 {
+    public const string SchemaName = "Staging";
+
     public HvacDbContext(DbContextOptions<HvacDbContext> options) : base(options)
     {
     }
@@ -28,8 +30,8 @@ public class HvacDbContext : DbContext
     {
         base.OnModelCreating(modelBuilder);
 
-        // All tables are placed into the single default "public" schema
-        modelBuilder.HasDefaultSchema("public");
+        // Change the application schema here; migrations capture this value when generated.
+        modelBuilder.HasDefaultSchema(SchemaName);
 
         // Enable PostgreSQL extensions
         modelBuilder.HasPostgresExtension("citext");
@@ -180,6 +182,11 @@ public class HvacDbContext : DbContext
             b.Property(t => t.ConcurrencyToken).IsRowVersion();
 
             b.HasIndex(t => new { t.VendorId, t.Status });
+            b.HasIndex(t => new { t.OwnerCoordinatorId, t.Status })
+                .HasDatabaseName("ix_service_tickets_owner_coordinator_status");
+            b.HasIndex(t => new { t.OwnerCoordinatorId, t.Status })
+                .HasDatabaseName("ix_service_tickets_unclaimed_open_queue")
+                .HasFilter("owner_coordinator_id IS NULL AND status = 'Open'");
             b.HasIndex(t => t.TargetResolutionAt);
             b.HasIndex(t => t.SLAState);
 
@@ -208,10 +215,20 @@ public class HvacDbContext : DbContext
                 .HasForeignKey(t => t.RaisedByUserId)
                 .OnDelete(DeleteBehavior.Restrict);
 
+            b.HasOne(t => t.OwnerCoordinator)
+                .WithMany()
+                .HasForeignKey(t => t.OwnerCoordinatorId)
+                .OnDelete(DeleteBehavior.SetNull);
+
             b.HasOne(t => t.AssignedTechnician)
                 .WithMany()
                 .HasForeignKey(t => t.AssignedTechnicianId)
                 .OnDelete(DeleteBehavior.Restrict);
+
+            b.HasOne(t => t.AssignedByUser)
+                .WithMany()
+                .HasForeignKey(t => t.AssignedByUserId)
+                .OnDelete(DeleteBehavior.SetNull);
         });
 
         // Configure TicketComments

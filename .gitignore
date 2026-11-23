@@ -1,5 +1,3 @@
-Backend/src/HvacConnect.ConsoleApp/appsettings.json
-
 Context
 
 # .NET build and test output
@@ -30,3 +28,6 @@ Context
 .idea/
 .DS_Store
 Thumbs.db
+Backend/src/HvacConnect.ConsoleApp/bin
+Backend/src/HvacConnect.Core/bin
+Backend/src/HvacConnect.Infrastructure/bin

@@ -17,10 +17,34 @@ public static partial class Program
             .Include(t => t.Asset)
             .Include(t => t.Vendor)
             .Include(t => t.RaisedByUser)
+            .Include(t => t.OwnerCoordinator)
             .Include(t => t.AssignedTechnician)
+            .Include(t => t.AssignedByUser)
             .Include(t => t.Comments);
 
-        if (_currentUser!.Role == UserRole.VendorAdmin)
+        string queueFilterTitle = "Active Service Tickets & SLA Watchdog";
+
+        // Coordinators and Super Admins share a unified dispatch desk queue
+        if (_currentUser!.Role == UserRole.ServiceCoordinator || _currentUser.Role == UserRole.SuperAdmin)
+        {
+            Console.WriteLine("\n─── DISPATCH DESK QUEUE FILTERS ───");
+            Console.WriteLine("1. All Tickets (Shared Dispatch Queue)");
+            Console.WriteLine("2. Unclaimed Tickets Queue (owner IS NULL)");
+            Console.WriteLine("3. My Claimed Tickets");
+            Console.Write("Select filter [1-3, default 1]: ");
+            string? fChoice = Console.ReadLine()?.Trim();
+            if (fChoice == "2")
+            {
+                query = query.Where(t => t.OwnerCoordinatorId == null && t.Status != TicketStatus.Closed);
+                queueFilterTitle = "Unclaimed Service Tickets Queue (Open & Unowned)";
+            }
+            else if (fChoice == "3")
+            {
+                query = query.Where(t => t.OwnerCoordinatorId == _currentUser.Id && t.Status != TicketStatus.Closed);
+                queueFilterTitle = $"My Claimed Tickets ({_currentUser.FirstName} {_currentUser.LastName})";
+            }
+        }
+        else if (_currentUser.Role == UserRole.VendorAdmin)
         {
             query = query.Where(t => t.VendorId == _currentUser.VendorId || 
                                     (t.RaisedByUser != null && t.RaisedByUser.VendorId == _currentUser.VendorId));
@@ -34,7 +58,8 @@ public static partial class Program
             query = query.Where(t => t.CanonicalCustomerId == _currentUser.CustomerId);
         }
 
-        var tickets = await query.OrderByDescending(t => t.CreatedAt).ToListAsync();
+        // Sorted by SLA deadline countdown
+        var tickets = await query.OrderBy(t => t.TargetResolutionAt).ToListAsync();
 
         var rows = new List<string[]>();
         foreach (var t in tickets)
@@ -47,23 +72,27 @@ public static partial class Program
                 ? $"{t.AssignedTechnician.FirstName} {t.AssignedTechnician.LastName}" 
                 : "Unassigned";
 
+            string ownerName = t.OwnerCoordinator != null 
+                ? $"{t.OwnerCoordinator.FirstName} {t.OwnerCoordinator.LastName}" 
+                : "[UNCLAIMED]";
+
             rows.Add(new string[]
             {
                 t.TicketNumber,
                 t.Status.ToString(),
                 $"[{liveSla}]",
                 t.Priority.ToString(),
-                t.Asset?.AssetTag ?? "N/A",
+                ownerName,
                 techName,
                 t.Customer?.CustomerName ?? "N/A",
                 t.Title
             });
         }
 
-        TableFormatter.PrintTable("Active Service Tickets & SLA Watchdog",
-            new[] { "Ticket#", "Status", "SLA State", "Priority", "Asset", "Technician", "Customer", "Title" },
+        TableFormatter.PrintTable(queueFilterTitle,
+            new[] { "Ticket#", "Status", "SLA State", "Priority", "Owner / Dispatcher", "Technician", "Customer", "Title" },
             rows,
-            new[] { 10, 12, 12, 10, 12, 18, 22, 28 });
+            new[] { 10, 11, 12, 9, 18, 16, 20, 26 });
 
         Console.Write("\nEnter Ticket# to view details & act (or press ENTER to back): ");
         string? ticketNum = Console.ReadLine()?.Trim();
@@ -90,8 +119,20 @@ public static partial class Program
         Console.WriteLine($"Description: {ticket.Description}");
         Console.WriteLine($"Customer:    {ticket.Customer?.CustomerName} (Site: {ticket.SiteLocation?.SiteName})");
         Console.WriteLine($"Asset:       {ticket.Asset?.AssetTag} ({ticket.Asset?.Category} - {ticket.Asset?.Manufacturer})");
-        Console.WriteLine($"Assigned To: {(ticket.AssignedTechnician != null ? ticket.AssignedTechnician.FirstName + " " + ticket.AssignedTechnician.LastName + " (" + ticket.Vendor?.BrandName + ")" : "Unassigned")}");
-        Console.WriteLine($"Status:      {ticket.Status} | Priority: {ticket.Priority}");
+
+        string ownerInfo = ticket.OwnerCoordinator != null 
+            ? $"{ticket.OwnerCoordinator.FirstName} {ticket.OwnerCoordinator.LastName} (Claimed: {ticket.ClaimedAt:yyyy-MM-dd HH:mm UTC})"
+            : "[UNCLAIMED — Open in Dispatch Desk Queue]";
+        Console.WriteLine($"Owner / Dispatch:   {ownerInfo}");
+
+        Console.WriteLine($"Assigned To:        {(ticket.AssignedTechnician != null ? ticket.AssignedTechnician.FirstName + " " + ticket.AssignedTechnician.LastName + " (" + ticket.Vendor?.BrandName + ")" : "Unassigned")}");
+
+        string assignedByInfo = ticket.AssignedByUser != null
+            ? $"{ticket.AssignedByUser.FirstName} {ticket.AssignedByUser.LastName} ({ticket.AssignedByUser.Role}) at {ticket.AssignedAt:yyyy-MM-dd HH:mm UTC}"
+            : (ticket.AssignedTechnician != null ? "Direct / Pre-cutover" : "Unassigned");
+        Console.WriteLine($"Assigned By:        {assignedByInfo}");
+
+        Console.WriteLine($"Status:             {ticket.Status} | Priority: {ticket.Priority}");
         Console.WriteLine($"Resolution Deadline: {ticket.TargetResolutionAt:yyyy-MM-dd HH:mm UTC}");
 
         Console.WriteLine("\n─── Comments & Diagnostic Thread ───");
@@ -108,21 +149,44 @@ public static partial class Program
             Console.WriteLine($"[{c.CreatedAt:HH:mm}] {c.AuthorUser?.FirstName} {c.AuthorUser?.LastName} [{authorRole} - {c.CommentType}]: {c.CommentText}");
         }
 
+        bool isOwner = ticket.OwnerCoordinatorId == _currentUser!.Id;
+        bool isUnowned = ticket.OwnerCoordinatorId == null;
+        bool isSuperAdmin = _currentUser.Role == UserRole.SuperAdmin;
+        bool isCoordinator = _currentUser.Role == UserRole.ServiceCoordinator;
+        bool isVendorAdmin = _currentUser.Role == UserRole.VendorAdmin;
+        bool isTech = _currentUser.Role == UserRole.Technician;
+
+        if (isCoordinator && !isOwner && !isUnowned)
+        {
+            PrintWarning($"Notice: This ticket is claimed by {ticket.OwnerCoordinator?.FirstName} {ticket.OwnerCoordinator?.LastName}. Only the owner or Super Admin can modify it. Use [T] to Take Over.");
+        }
+
+        bool canClaim = (isCoordinator || isSuperAdmin) && isUnowned;
+        bool canTakeOver = isCoordinator && !isOwner && !isUnowned;
+
+        bool canUpdateStatus = isSuperAdmin || 
+                               (isTech && ticket.AssignedTechnicianId == _currentUser.Id) || 
+                               (isVendorAdmin && (ticket.VendorId == _currentUser.VendorId || ticket.VendorId == null)) || 
+                               (isCoordinator && (isOwner || isUnowned));
+
+        bool canAssign = isSuperAdmin || 
+                         isVendorAdmin || 
+                         (isCoordinator && (isOwner || isUnowned));
+
         Console.WriteLine("\nActions:");
         Console.WriteLine("[C] Add Comment");
-
-        bool canUpdateStatus = _currentUser!.Role == UserRole.Technician || 
-                               _currentUser.Role == UserRole.ServiceCoordinator || 
-                               _currentUser.Role == UserRole.VendorAdmin || 
-                               _currentUser.Role == UserRole.SuperAdmin;
+        if (canClaim)
+        {
+            Console.WriteLine("[K] Claim Ticket (Atomic Queue Lock)");
+        }
+        if (canTakeOver)
+        {
+            Console.WriteLine("[T] Take Over Ticket (Transfer Ownership with Required Reason)");
+        }
         if (canUpdateStatus)
         {
             Console.WriteLine("[U] Update Status");
         }
-
-        bool canAssign = _currentUser.Role == UserRole.SuperAdmin || 
-                         _currentUser.Role == UserRole.ServiceCoordinator || 
-                         _currentUser.Role == UserRole.VendorAdmin;
         if (canAssign)
         {
             Console.WriteLine("[A] Assign / Reassign Technician (Smart Matching)");
@@ -161,6 +225,60 @@ public static partial class Program
             db.TicketComments.Add(c);
             await db.SaveChangesAsync();
             PrintSuccess("Comment added to ticket thread.");
+        }
+        else if (act == "K" && canClaim)
+        {
+            // Concurrency lock: atomic ExecuteUpdateAsync where owner_coordinator_id IS NULL
+            int affected = await db.ServiceTickets
+                .Where(t => t.Id == ticket.Id && t.OwnerCoordinatorId == null)
+                .ExecuteUpdateAsync(s => s
+                    .SetProperty(t => t.OwnerCoordinatorId, _currentUser.Id)
+                    .SetProperty(t => t.ClaimedAt, DateTime.UtcNow)
+                    .SetProperty(t => t.UpdatedAt, DateTime.UtcNow));
+
+            if (affected == 0)
+            {
+                PrintError("409 Conflict: This ticket was already claimed by another coordinator in the shared queue.");
+                return;
+            }
+
+            ticket.OwnerCoordinatorId = _currentUser.Id;
+            ticket.ClaimedAt = DateTime.UtcNow;
+            ticket.OwnerCoordinator = _currentUser;
+
+            db.TicketComments.Add(new TicketComment
+            {
+                TicketId = ticket.Id,
+                AuthorUserId = _currentUser.Id,
+                CommentType = CommentType.Assignment,
+                CommentText = $"Ticket claimed by coordinator {_currentUser.FirstName} {_currentUser.LastName}."
+            });
+            await db.SaveChangesAsync();
+
+            PrintSuccess($"Ticket '{ticket.TicketNumber}' successfully claimed! You are now the designated owner.");
+        }
+        else if (act == "T" && canTakeOver)
+        {
+            string reason = PromptValidated("Mandatory Take-Over Reason: ", val => InputValidator.ValidateRequiredText(val, "Take-Over Reason", 5, 500));
+            string prevOwner = ticket.OwnerCoordinator != null 
+                ? $"{ticket.OwnerCoordinator.FirstName} {ticket.OwnerCoordinator.LastName}" 
+                : "Previous Owner";
+
+            ticket.OwnerCoordinatorId = _currentUser.Id;
+            ticket.ClaimedAt = DateTime.UtcNow;
+            ticket.OwnerCoordinator = _currentUser;
+            ticket.UpdatedAt = DateTime.UtcNow;
+
+            db.TicketComments.Add(new TicketComment
+            {
+                TicketId = ticket.Id,
+                AuthorUserId = _currentUser.Id,
+                CommentType = CommentType.Assignment,
+                CommentText = $"Ticket taken over from {prevOwner} by {_currentUser.FirstName} {_currentUser.LastName}. Reason: {reason}"
+            });
+            await db.SaveChangesAsync();
+
+            PrintSuccess($"Ticket ownership successfully transferred to {_currentUser.FirstName} {_currentUser.LastName}.");
         }
         else if (act == "U" && canUpdateStatus)
         {
@@ -226,6 +344,7 @@ public static partial class Program
             .Include(u => u.Vendor)
             .Where(u => u.Role == UserRole.Technician && u.IsActive);
 
+        // Vendor Admin can only assign from their own roster; Coordinators & Super Admin can pick across all agencies
         if (_currentUser!.Role == UserRole.VendorAdmin)
         {
             techQuery = techQuery.Where(u => u.VendorId == _currentUser.VendorId);
@@ -273,6 +392,7 @@ public static partial class Program
             {
                 tech.Id.ToString(),
                 $"{tech.FirstName} {tech.LastName}",
+                tech.Vendor?.BrandName ?? "Independent",
                 specDisplay,
                 $"{activeJobs} active",
                 tech.AvailabilityStatus.ToString()
@@ -280,9 +400,9 @@ public static partial class Program
         }
 
         TableFormatter.PrintTable("Ranked Technicians by Specialisation Match & Workload",
-            new[] { "ID", "Name", "Specialisation", "Active Jobs", "Status" },
+            new[] { "ID", "Name", "Agency / Vendor", "Specialisation", "Active Jobs", "Status" },
             rows,
-            new[] { 6, 20, 26, 14, 14 });
+            new[] { 6, 18, 24, 24, 13, 12 });
 
         string chosenIdStr = Prompt("\nEnter Technician ID to assign (or press ENTER to cancel): ");
         if (int.TryParse(chosenIdStr, out int chosenId))
@@ -291,12 +411,24 @@ public static partial class Program
             if (chosenTech != null)
             {
                 ticket.AssignedTechnicianId = chosenTech.Id;
-                ticket.VendorId = chosenTech.VendorId;
+                ticket.VendorId = chosenTech.VendorId; // Ticket's vendor becomes that technician's vendor!
+                ticket.AssignedByUserId = _currentUser.Id;
+                ticket.AssignedAt = DateTime.UtcNow;
+
+                // Auto-claim ticket if coordinator assigns on an unowned ticket
+                if (_currentUser.Role == UserRole.ServiceCoordinator && ticket.OwnerCoordinatorId == null)
+                {
+                    ticket.OwnerCoordinatorId = _currentUser.Id;
+                    ticket.ClaimedAt = DateTime.UtcNow;
+                    ticket.OwnerCoordinator = _currentUser;
+                }
+
                 if (ticket.Status == TicketStatus.Open)
                 {
                     ticket.Status = TicketStatus.Assigned;
                 }
                 ticket.RespondedAt ??= DateTime.UtcNow;
+                ticket.UpdatedAt = DateTime.UtcNow;
 
                 db.TicketComments.Add(new TicketComment
                 {
@@ -307,7 +439,7 @@ public static partial class Program
                 });
 
                 await db.SaveChangesAsync();
-                PrintSuccess($"Ticket {ticket.TicketNumber} assigned to {chosenTech.FirstName} {chosenTech.LastName}.");
+                PrintSuccess($"Ticket {ticket.TicketNumber} assigned to {chosenTech.FirstName} {chosenTech.LastName} ({chosenTech.Vendor?.BrandName}).");
             }
             else
             {
@@ -389,9 +521,8 @@ public static partial class Program
         var (respTime, resTime) = SlaCalculator.GetDefaultDurations(priority);
         string ticketNumber = $"TKT-{new Random().Next(2500, 9999)}";
 
-        int? ticketVendorId = _currentUser.Role == UserRole.VendorAdmin 
-            ? _currentUser.VendorId 
-            : selectedSite.PrimaryVendorId;
+        // A new customer ticket starts Open with NO vendor and NO owner (lands in shared coordinator queue)
+        int? ticketVendorId = _currentUser.Role == UserRole.VendorAdmin ? _currentUser.VendorId : null;
 
         var ticket = new ServiceTicket
         {
@@ -399,6 +530,11 @@ public static partial class Program
             CanonicalCustomerId = selectedSite.CanonicalCustomerId,
             SiteLocationId = selectedSite.Id,
             VendorId = ticketVendorId,
+            OwnerCoordinatorId = null, // No owner initially
+            ClaimedAt = null,
+            AssignedTechnicianId = null,
+            AssignedByUserId = null,
+            AssignedAt = null,
             AssetEquipmentId = selectedAsset.Id,
             Title = title,
             Description = desc,
@@ -422,6 +558,6 @@ public static partial class Program
         });
         await db.SaveChangesAsync();
 
-        PrintSuccess($"Ticket created: {ticketNumber} with Resolution SLA deadline: {ticket.TargetResolutionAt:yyyy-MM-dd HH:mm UTC}");
+        PrintSuccess($"Ticket created: {ticketNumber} with Resolution SLA deadline: {ticket.TargetResolutionAt:yyyy-MM-dd HH:mm UTC}. Ticket entered shared Dispatch Queue as Unclaimed.");
     }
 }

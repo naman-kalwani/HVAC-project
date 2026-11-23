@@ -11,15 +11,10 @@ public static partial class Program
 {
     private static async Task ShowLoginMenu(HvacDbContext db)
     {
-        Console.WriteLine("\n─── SELECT USER TO LOGIN / REGISTER ───");
-        Console.WriteLine("1. Super Admin (Shivansh Rastogi - Parent Group)");
-        Console.WriteLine("2. Vendor Admin (Jordan Lee - Pacific Climate)");
-        Console.WriteLine("3. Service Coordinator (Alex Morgan - Dispatcher)");
-        Console.WriteLine("4. Technician (Casey Reed - Field Tech)");
-        Console.WriteLine("5. Facility Manager / Customer (Marcus Vance - Apex Retail)");
-        Console.WriteLine("6. Custom Email & Password Login (PBKDF2 Salt Hash Check)");
-        Console.WriteLine("7. Register New Customer / End User Account");
-        Console.WriteLine("0. Exit Application");
+        Console.WriteLine("\n─── HVAC CONNECT ───");
+        Console.WriteLine("1. Sign in with email");
+        Console.WriteLine("2. Create a new customer account");
+        Console.WriteLine("0.  Exit Application");
         Console.Write("Enter choice: ");
 
         string? choice = Console.ReadLine()?.Trim();
@@ -27,39 +22,20 @@ public static partial class Program
         {
             Environment.Exit(0);
         }
-        else if (choice == "7")
+        if (choice == "2")
         {
             await RegisterEndUserAccount(db);
             return;
         }
-
-        string email;
-        string? password = null;
-
-        if (choice == "6")
+        if (choice != "1")
         {
-            email = PromptValidated("Enter email: ", InputValidator.ValidateEmail);
-            Console.Write("Enter password: ");
-            password = ReadMaskedPassword();
-        }
-        else
-        {
-            email = choice switch
-            {
-                "1" => "admin@hvacconnect.com",
-                "2" => "jordan.lee@pacificclimate.com",
-                "3" => "coordinator@hvacconnect.com",
-                "4" => "casey.reed@pacificclimate.com",
-                "5" => "m.vance@apexretail.example",
-                _ => ""
-            };
-        }
-
-        if (string.IsNullOrWhiteSpace(email))
-        {
-            PrintError("Invalid selection.");
+            PrintError("Choose 1 to sign in, 2 to sign up, or 0 to exit.");
             return;
         }
+
+        string email = PromptValidated("Email: ", InputValidator.ValidateEmail);
+        Console.Write("Password: ");
+        string password = ReadMaskedPassword();
 
         var user = await db.Users
             .Include(u => u.Vendor)
@@ -84,30 +60,26 @@ public static partial class Program
             return;
         }
 
-        // Custom Login: Verify password against PBKDF2 salted hash with 5-attempt lockout
-        if (choice == "6")
+        if (!PasswordService.VerifyPassword(password, user.PasswordHash))
         {
-            bool isPasswordCorrect = PasswordService.VerifyPassword(password ?? "", user.PasswordHash);
-            if (!isPasswordCorrect)
+            user.FailedLoginCount++;
+            if (user.FailedLoginCount >= 5)
             {
-                user.FailedLoginCount++;
-                if (user.FailedLoginCount >= 5)
-                {
-                    user.LockoutEndAt = DateTime.UtcNow.AddMinutes(15);
-                    PrintError("Too many failed login attempts. Account locked for 15 minutes (USR-BR-009).");
-                }
-                else
-                {
-                    PrintError($"Invalid credentials. Failed attempts: {user.FailedLoginCount}/5.");
-                }
-                await db.SaveChangesAsync();
-                return;
+                user.LockoutEndAt = DateTime.UtcNow.AddMinutes(15);
+                PrintError("Too many failed login attempts. Account locked for 15 minutes (USR-BR-009).");
             }
-
-            user.FailedLoginCount = 0;
-            user.LastLoginAt = DateTime.UtcNow;
+            else
+            {
+                PrintError($"Invalid credentials. Failed attempts: {user.FailedLoginCount}/5.");
+            }
             await db.SaveChangesAsync();
+            return;
         }
+
+        user.FailedLoginCount = 0;
+        user.LockoutEndAt = null;
+        user.LastLoginAt = DateTime.UtcNow;
+        await db.SaveChangesAsync();
 
         _currentUser = user;
         PrintSuccess($"Logged in as: {user.FirstName} {user.LastName} | Role: [{user.Role}]" +

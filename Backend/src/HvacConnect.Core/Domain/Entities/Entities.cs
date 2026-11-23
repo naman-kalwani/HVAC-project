@@ -210,8 +210,16 @@ public class ServiceTicket
     public int? RaisedByUserId { get; set; }
     public User? RaisedByUser { get; set; }
 
+    public int? OwnerCoordinatorId { get; set; }
+    public User? OwnerCoordinator { get; set; }
+    public DateTime? ClaimedAt { get; set; }
+
     public int? AssignedTechnicianId { get; set; }
     public User? AssignedTechnician { get; set; }
+
+    public int? AssignedByUserId { get; set; }
+    public User? AssignedByUser { get; set; }
+    public DateTime? AssignedAt { get; set; }
 
     public DateTime? ScheduledStartAt { get; set; }
     public DateTime? RespondedAt { get; set; }

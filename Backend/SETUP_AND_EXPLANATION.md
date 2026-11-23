@@ -36,12 +36,16 @@ Open `src/HvacConnect.ConsoleApp/appsettings.json` and adjust the connection str
 {
   "ConnectionStrings": {
     "DefaultConnection": "Host=localhost;Port=5432;Database=hvac_connect;Username=postgres;Password=YOUR_POSTGRES_PASSWORD"
+  },
+  "Database": {
+    "ResetOnStartup": true
   }
 }
 ```
 
-> **Note on Database Creation:**  
-> You can create an empty database in pgAdmin named `hvac_connect`. The application runs `db.Database.EnsureCreatedAsync()` upon startup, which automatically creates all tables, sequences, indexes, and test seed data!
+> **Database behavior:** The application applies EF Core migrations and then seeds demo data on startup. `ResetOnStartup: true` deletes and recreates the configured database every time the application starts. Set it to `false` to preserve data and only apply pending migrations. You can also override this for one run with `--reset-db=false` or `--reset-db=true`.
+>
+> The database schema is configured by `HvacDbContext.SchemaName` in `src/HvacConnect.Infrastructure/Data/HvacDbContext.cs`. To use another schema, change that constant and create a new EF Core migration.
 
 ---
 
@@ -59,6 +63,8 @@ Run the console application directly:
 ```powershell
 dotnet run --project src/HvacConnect.ConsoleApp/HvacConnect.ConsoleApp.csproj
 ```
+
+On startup, sign in with a seeded email/password or choose customer sign-up. Demo account credentials are printed after a fresh seed.
 
 ---
 
@@ -86,10 +92,10 @@ Use this script/outline when explaining what was built to evaluators, team membe
 ---
 
 ### Step 3: Single-Schema Database Architecture
-> *"Per our requirements, rather than fragmenting tables into four separate schemas, all 13 tables are unified in the default `public` schema with explicit relational boundaries and referential integrity:*
+> *"Rather than fragmenting tables into separate schemas, all domain tables are unified in the `Staging` schema with explicit relational boundaries and referential integrity:*
 > 
 > 1. **`users`**: Role-based accounts for all 5 roles with PBKDF2 hashed passwords, lockout counters, and tenant scopes.
-> 2. **`vendors`**: Acquired contractors (e.g. *Pacific Climate Solutions*), tracking two-phase onboarding readiness.
+> 2. **`vendors`**: Acquired contractors, tracking two-phase onboarding readiness.
 > 3. **`canonical_customers` & `brand_customer_accounts`**: Decouples the unified holding-group customer identity from the vendor's local legacy account numbers.
 > 4. **`site_locations` & `site_location_histories`**: Physical facilities with an immutable audit ledger recording every change of address or primary contractor.
 > 5. **`asset_equipment`**: High-value commercial equipment (RTUs, Chillers, Boilers, Walk-in Coolers, Refrigeration Racks) with warranty tracking.

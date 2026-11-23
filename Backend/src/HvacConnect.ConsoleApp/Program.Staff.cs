@@ -22,7 +22,7 @@ public static partial class Program
             .Include(u => u.Vendor)
             .Where(u => u.Role == UserRole.Technician && u.IsActive);
 
-        if (_currentUser!.Role == UserRole.VendorAdmin)
+        if (_currentUser!.Role == UserRole.VendorAdmin || (_currentUser.Role == UserRole.ServiceCoordinator && _currentUser.VendorId != null))
         {
             query = query.Where(u => u.VendorId == _currentUser.VendorId);
         }
@@ -244,7 +244,7 @@ public static partial class Program
         Console.WriteLine("\n═══════ ADD NEW FIELD TECHNICIAN ═══════");
 
         int vendorId;
-        if (_currentUser!.Role == UserRole.VendorAdmin)
+        if (_currentUser!.Role == UserRole.VendorAdmin || (_currentUser.Role == UserRole.ServiceCoordinator && _currentUser.VendorId != null))
         {
             vendorId = _currentUser.VendorId!.Value;
         }
@@ -373,7 +373,7 @@ public static partial class Program
         IQueryable<User> query = db.Users.Include(u => u.Vendor)
             .Where(u => u.Role == UserRole.Technician || u.Role == UserRole.ServiceCoordinator);
 
-        if (_currentUser!.Role == UserRole.VendorAdmin)
+        if (_currentUser!.Role == UserRole.VendorAdmin || (_currentUser.Role == UserRole.ServiceCoordinator && _currentUser.VendorId != null))
         {
             query = query.Where(u => u.VendorId == _currentUser.VendorId);
         }

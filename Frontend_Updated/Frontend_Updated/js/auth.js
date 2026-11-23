@@ -96,18 +96,6 @@ const Auth = {
     },
 
     /**
-     * Quick demo login by role key (e.g. 'superadmin', 'technician')
-     */
-    loginAsRole(roleKey, remember = false) {
-        const user = DEMO_USERS.find(u => u.roleKey === roleKey);
-        if (user) {
-            this.setSession(user, remember);
-            return user;
-        }
-        return null;
-    },
-
-    /**
      * Register a new user
      */
     signup(name, email, password) {
@@ -182,4 +170,3 @@ const Auth = {
 
 // Export to window for vanilla JS access across script tags
 window.Auth = Auth;
-window.DEMO_USERS = DEMO_USERS;

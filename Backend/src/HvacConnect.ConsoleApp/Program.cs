@@ -18,6 +18,7 @@ public static partial class Program
         var config = new ConfigurationBuilder()
             .SetBasePath(AppContext.BaseDirectory)
             .AddJsonFile("appsettings.json", optional: false, reloadOnChange: true)
+            .AddEnvironmentVariables()
             .Build();
 
         // Retrieve the connection string – throw a clear error if it is missing
@@ -29,13 +30,46 @@ public static partial class Program
         }
 
         var optionsBuilder = new DbContextOptionsBuilder<HvacDbContext>();
-        optionsBuilder.UseNpgsql(connectionString)
+        optionsBuilder.UseNpgsql(connectionString, options =>
+                          options.MigrationsHistoryTable("__EFMigrationsHistory", HvacDbContext.SchemaName))
                       .UseSnakeCaseNamingConvention();
 
         HvacDbContext db;
         try
         {
             db = new HvacDbContext(optionsBuilder.Options);
+
+            bool resetDatabase = config.GetValue("Database:ResetOnStartup", false);
+            string? resetArgument = args.FirstOrDefault(a =>
+                a.Equals("--reset-db", StringComparison.OrdinalIgnoreCase) ||
+                a.StartsWith("--reset-db=", StringComparison.OrdinalIgnoreCase));
+
+            if (resetArgument != null)
+            {
+                int resetArgumentIndex = Array.IndexOf(args, resetArgument);
+                if (resetArgument.StartsWith("--reset-db=", StringComparison.OrdinalIgnoreCase))
+                {
+                    bool.TryParse(resetArgument.Split('=', 2)[1], out resetDatabase);
+                }
+                else if (resetArgumentIndex >= 0 &&
+                         resetArgumentIndex + 1 < args.Length &&
+                         bool.TryParse(args[resetArgumentIndex + 1], out bool resetValue))
+                {
+                    resetDatabase = resetValue;
+                }
+                else
+                {
+                    resetDatabase = true;
+                }
+            }
+
+            if (resetDatabase)
+            {
+                Console.WriteLine("[DATABASE] Reset-on-startup is enabled. Recreating database from scratch...");
+                await db.Database.EnsureDeletedAsync();
+            }
+
+            await db.Database.MigrateAsync();
             await DatabaseSeeder.SeedAsync(db);
         }
         catch (Exception ex)

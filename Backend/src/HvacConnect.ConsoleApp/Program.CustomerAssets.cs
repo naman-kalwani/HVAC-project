@@ -70,7 +70,7 @@ public static partial class Program
             .Include(c => c.BrandAccounts)
             .Include(c => c.Sites);
 
-        if (_currentUser!.Role == UserRole.VendorAdmin)
+        if (_currentUser!.Role == UserRole.VendorAdmin || (_currentUser.Role == UserRole.ServiceCoordinator && _currentUser.VendorId != null))
         {
             query = query.Where(c => c.BrandAccounts.Any(b => b.VendorId == _currentUser.VendorId));
         }
@@ -102,7 +102,7 @@ public static partial class Program
             .Include(s => s.Customer)
             .Include(s => s.PrimaryVendor);
 
-        if (_currentUser!.Role == UserRole.VendorAdmin)
+        if (_currentUser!.Role == UserRole.VendorAdmin || (_currentUser.Role == UserRole.ServiceCoordinator && _currentUser.VendorId != null))
         {
             query = query.Where(s => s.PrimaryVendorId == _currentUser.VendorId);
         }
@@ -132,7 +132,7 @@ public static partial class Program
         IQueryable<AssetEquipment> query = db.AssetEquipment
             .Include(a => a.SiteLocation);
 
-        if (_currentUser!.Role == UserRole.VendorAdmin)
+        if (_currentUser!.Role == UserRole.VendorAdmin || (_currentUser.Role == UserRole.ServiceCoordinator && _currentUser.VendorId != null))
         {
             query = query.Where(a => a.SourceVendorId == _currentUser.VendorId || 
                                      (a.SiteLocation != null && a.SiteLocation.PrimaryVendorId == _currentUser.VendorId));
@@ -165,7 +165,7 @@ public static partial class Program
         Console.WriteLine("\n═══════ REGISTER NEW EQUIPMENT ASSET ═══════");
 
         IQueryable<SiteLocation> sitesQuery = db.SiteLocations.Include(s => s.Customer);
-        if (_currentUser!.Role == UserRole.VendorAdmin)
+        if (_currentUser!.Role == UserRole.VendorAdmin || (_currentUser.Role == UserRole.ServiceCoordinator && _currentUser.VendorId != null))
         {
             sitesQuery = sitesQuery.Where(s => s.PrimaryVendorId == _currentUser.VendorId);
         }
@@ -232,7 +232,7 @@ public static partial class Program
             InstallDate = DateOnly.FromDateTime(DateTime.UtcNow),
             WarrantyEndDate = DateOnly.FromDateTime(DateTime.UtcNow.AddYears(5)),
             Status = AssetStatus.Active,
-            SourceVendorId = _currentUser.Role == UserRole.VendorAdmin ? _currentUser.VendorId : selectedSite.PrimaryVendorId
+            SourceVendorId = (_currentUser.Role == UserRole.VendorAdmin || (_currentUser.Role == UserRole.ServiceCoordinator && _currentUser.VendorId != null)) ? _currentUser.VendorId : selectedSite.PrimaryVendorId
         };
 
         db.AssetEquipment.Add(newAsset);
