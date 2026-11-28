@@ -5,6 +5,7 @@ using System.Text.RegularExpressions;
 using HvacConnect.Core.Domain.Entities;
 using HvacConnect.Core.Domain.Enums;
 using HvacConnect.Core.Services;
+using HvacConnect.Core.Validation;
 using HvacConnect.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
 
@@ -75,7 +76,7 @@ internal static class VendorImportPipeline
             if (!File.Exists(path)) { error($"File not found: {path}"); continue; }
             try { if (await ImportOneAsync(db, actor, vendor, type, path, prompt, error, success)) count++; }
             catch (Exception ex) { error($"Could not import {Path.GetFileName(path)}: {ex.Message}"); }
-            if (!prompt("Import another file for any vendor? (y/n): ").Equals("y", StringComparison.OrdinalIgnoreCase)) break;
+            if (!PromptYesNo(prompt, error, "Import another file for any vendor? (y/n): ")) break;
         }
         if (count == 0) Console.WriteLine("No files imported.");
         else success($"Staged {count} file(s). Open menu option 12 to review duplicate records.");
@@ -199,7 +200,7 @@ internal static class VendorImportPipeline
                 break;
             }
         }
-        if (prompt("Save this mapping for this vendor and record type? (y/n): ").Equals("y", StringComparison.OrdinalIgnoreCase))
+        if (PromptYesNo(prompt, error, "Save this mapping for this vendor and record type? (y/n): "))
         {
             string name = prompt("Template name (Enter for Default): "); if (name.Length == 0) name = "Default";
             var template = await db.VendorMappingTemplates.FirstOrDefaultAsync(t => t.VendorId == vendor.Id && t.EntityType == type && t.TemplateName == name);
@@ -211,13 +212,45 @@ internal static class VendorImportPipeline
 
     private static string Normalize(string value) => Regex.Replace(value.ToLowerInvariant(), @"[^a-z0-9]", "");
 
+    private static bool PromptYesNo(Func<string, string> prompt, Action<string> error, string label)
+    {
+        while (true)
+        {
+            string answer = prompt(label);
+            if (answer.Equals("y", StringComparison.OrdinalIgnoreCase)) return true;
+            if (answer.Equals("n", StringComparison.OrdinalIgnoreCase)) return false;
+            error("Enter Y or N.");
+        }
+    }
+
     private static async Task<string> ProcessRowAsync(HvacDbContext db, ImportJob job, Vendor vendor, ImportRow row, Dictionary<string, string> data)
     {
         string Get(string key) => data.GetValueOrDefault(key, "").Trim();
         if (job.EntityType == "Customers")
         {
             string name = Get("customer_name");
-            if (name.Length < 2) return "Error:Customer name is missing or too short.";
+            var nameValidation = InputValidator.ValidateOrganizationName(name, "Customer name", 2, 200);
+            if (!nameValidation.isValid) return $"Error:{nameValidation.errorMessage}";
+            var contactNameValidation = InputValidator.ValidateContactName(Get("contact_name"), "Primary contact name", required: false);
+            if (!contactNameValidation.isValid) return $"Error:{contactNameValidation.errorMessage}";
+            if (Get("email").Length > 0)
+            {
+                var emailValidation = InputValidator.ValidateEmail(Get("email"));
+                if (!emailValidation.isValid) return $"Error:{emailValidation.errorMessage}";
+            }
+            if (Get("phone").Length > 0)
+            {
+                var phoneValidation = InputValidator.ValidatePhone(Get("phone"));
+                if (!phoneValidation.isValid) return $"Error:{phoneValidation.errorMessage}";
+            }
+            var billingAddressValidation = InputValidator.ValidateOptionalText(Get("billing_address"), "Billing address", 255);
+            if (!billingAddressValidation.isValid) return $"Error:{billingAddressValidation.errorMessage}";
+            if (!string.IsNullOrWhiteSpace(Get("customer_type")))
+            {
+                try { _ = ParseCustomerType(Get("customer_type")); }
+                catch (InvalidDataException ex) { return $"Error:{ex.Message}"; }
+            }
+
             string accountNumber = Get("account_number");
             if (accountNumber.Length > 0)
             {
@@ -238,8 +271,23 @@ internal static class VendorImportPipeline
         if (customer == null) return "Error:Customer not found. Import and review customers before their sites or assets.";
         if (job.EntityType == "Sites")
         {
-            if (new[] { "site_name", "address", "city", "state", "postal_code" }.Any(k => Get(k).Length == 0))
-                return "Error:Site name, street address, city, state, and postal code are required.";
+            var siteNameValidation = InputValidator.ValidateRequiredText(Get("site_name"), "Site name", 2, 100);
+            if (!siteNameValidation.isValid) return $"Error:{siteNameValidation.errorMessage}";
+            var addressValidation = InputValidator.ValidateRequiredText(Get("address"), "Street address", 5, 200);
+            if (!addressValidation.isValid) return $"Error:{addressValidation.errorMessage}";
+            var cityValidation = InputValidator.ValidateRequiredText(Get("city"), "City", 2, 75);
+            if (!cityValidation.isValid) return $"Error:{cityValidation.errorMessage}";
+            var stateValidation = InputValidator.ValidateRequiredText(Get("state"), "State / province", 2, 20);
+            if (!stateValidation.isValid) return $"Error:{stateValidation.errorMessage}";
+            var postalCodeValidation = InputValidator.ValidatePostalCode(Get("postal_code"));
+            if (!postalCodeValidation.isValid) return $"Error:{postalCodeValidation.errorMessage}";
+            var contactNameValidation = InputValidator.ValidateContactName(Get("contact_name"), "Site contact name", required: false);
+            if (!contactNameValidation.isValid) return $"Error:{contactNameValidation.errorMessage}";
+            if (Get("contact_phone").Length > 0)
+            {
+                var phoneValidation = InputValidator.ValidatePhone(Get("contact_phone"));
+                if (!phoneValidation.isValid) return $"Error:{phoneValidation.errorMessage}";
+            }
             string siteName = Get("site_name"), siteAddress = Get("address");
             var oldSite = await db.SiteLocations.FirstOrDefaultAsync(s => s.CanonicalCustomerId == customer.Id &&
                 s.SiteName.ToLower() == siteName.ToLower() && s.AddressLine.ToLower() == siteAddress.ToLower());
@@ -251,7 +299,37 @@ internal static class VendorImportPipeline
         }
         if (job.EntityType == "Assets")
         {
-            if (Get("manufacturer").Length == 0 || Get("site_name").Length == 0) return "Error:Manufacturer and site name are required.";
+            var manufacturerValidation = InputValidator.ValidateRequiredText(Get("manufacturer"), "Manufacturer", 2, 100);
+            if (!manufacturerValidation.isValid) return $"Error:{manufacturerValidation.errorMessage}";
+            var siteNameValidation = InputValidator.ValidateRequiredText(Get("site_name"), "Site name", 2, 100);
+            if (!siteNameValidation.isValid) return $"Error:{siteNameValidation.errorMessage}";
+            if (Get("asset_tag").Length > 0)
+            {
+                var assetTagValidation = InputValidator.ValidateAssetTag(Get("asset_tag"));
+                if (!assetTagValidation.isValid) return $"Error:{assetTagValidation.errorMessage}";
+            }
+            foreach (var (key, label, maxLength) in new[]
+            {
+                ("model_number", "Model number", 100),
+                ("serial_number", "Serial number", 100),
+                ("refrigerant_type", "Refrigerant type", 30)
+            })
+            {
+                var optionalTextValidation = InputValidator.ValidateOptionalText(Get(key), label, maxLength);
+                if (!optionalTextValidation.isValid) return $"Error:{optionalTextValidation.errorMessage}";
+            }
+            if (Get("category").Length > 0)
+            {
+                try { _ = ParseAssetCategory(Get("category")); }
+                catch (InvalidDataException ex) { return $"Error:{ex.Message}"; }
+            }
+            try
+            {
+                _ = ParseDate(Get("install_date"));
+                _ = ParseDate(Get("warranty_end_date"));
+            }
+            catch (InvalidDataException ex) { return $"Error:{ex.Message}"; }
+
             string assetSiteName = Get("site_name");
             var site = await db.SiteLocations.FirstOrDefaultAsync(s => s.CanonicalCustomerId == customer.Id && s.SiteName.ToLower() == assetSiteName.ToLower());
             if (site == null) return "Error:Site not found for this customer. Import its site before importing assets.";
@@ -315,7 +393,7 @@ internal static class VendorImportPipeline
         {
             CanonicalCode = await UniqueCodeAsync("CUST-", code => db.CanonicalCustomers.AnyAsync(c => c.CanonicalCode == code)),
             CustomerName = name, NormalizedName = DuplicateMatchingEngine.NormalizeCustomerName(name),
-            CustomerType = Enum.TryParse<CustomerType>(data.GetValueOrDefault("customer_type")?.Replace(" ", ""), true, out var type) ? type : CustomerType.Commercial,
+            CustomerType = ParseCustomerType(data.GetValueOrDefault("customer_type")),
             PrimaryContactName = BlankToNull(data.GetValueOrDefault("contact_name")), PrimaryContactEmail = BlankToNull(data.GetValueOrDefault("email")),
             PrimaryContactPhone = BlankToNull(data.GetValueOrDefault("phone")), BillingAddress = BlankToNull(data.GetValueOrDefault("billing_address"))
         };
@@ -392,18 +470,33 @@ internal static class VendorImportPipeline
     private static AssetCategory ParseAssetCategory(string? value)
     {
         string category = Normalize(value ?? "");
-        if (category.Contains("chiller")) return AssetCategory.Chiller;
-        if (category.Contains("boiler")) return AssetCategory.Boiler;
-        if (category.Contains("walkin") || category.Contains("freezer") || category.Contains("cooler")) return AssetCategory.WalkInCoolerFreezer;
-        if (category.Contains("rack") || category.Contains("refrigeration")) return AssetCategory.RefrigerationRack;
-        return AssetCategory.RooftopUnit;
+        if (category is "chiller" or "chillers") return AssetCategory.Chiller;
+        if (category is "boiler" or "boilers") return AssetCategory.Boiler;
+        if (category is "walkincoolerfreezer" or "walkincooler" or "walkinfreezer" or "freezer" or "cooler")
+            return AssetCategory.WalkInCoolerFreezer;
+        if (category is "refrigerationrack" or "rack" or "refrigeration") return AssetCategory.RefrigerationRack;
+        if (category is "" or "rooftopunit" or "rooftop" or "rtu") return AssetCategory.RooftopUnit;
+        throw new InvalidDataException($"Unsupported equipment category '{value}'. Use RooftopUnit, Chiller, Boiler, WalkInCoolerFreezer, or RefrigerationRack.");
     }
+
+    private static CustomerType ParseCustomerType(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return CustomerType.Commercial;
+        string normalized = value.Replace(" ", "");
+        if (!int.TryParse(normalized, out _) &&
+            Enum.TryParse<CustomerType>(normalized, true, out var customerType) &&
+            Enum.IsDefined(typeof(CustomerType), customerType))
+            return customerType;
+
+        throw new InvalidDataException($"Unsupported customer type '{value}'. Use {string.Join(", ", Enum.GetNames(typeof(CustomerType)))}.");
+    }
+
     private static DateOnly? ParseDate(string? value)
     {
         if (string.IsNullOrWhiteSpace(value)) return null;
         if (DateOnly.TryParse(value, CultureInfo.InvariantCulture, DateTimeStyles.None, out var date)) return date;
         if (double.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out double serial) && serial > 0 && serial < 100000) return DateOnly.FromDateTime(DateTime.FromOADate(serial));
-        return null;
+        throw new InvalidDataException($"Invalid date '{value}'. Use a valid date or Excel date serial.");
     }
 
     public static Dictionary<string, string> Deserialize(string? json)

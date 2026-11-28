@@ -31,8 +31,13 @@ public static partial class Program
             Console.WriteLine("1. All Tickets (Shared Dispatch Queue)");
             Console.WriteLine("2. Unclaimed Tickets Queue (owner IS NULL)");
             Console.WriteLine("3. My Claimed Tickets");
-            Console.Write("Select filter [1-3, default 1]: ");
+            Console.Write("Select filter [1-3]: ");
             string? fChoice = Console.ReadLine()?.Trim();
+            if (fChoice is not ("1" or "2" or "3"))
+            {
+                PrintError("Select 1, 2, or 3.");
+                return;
+            }
             if (fChoice == "2")
             {
                 query = query.Where(t => t.OwnerCoordinatorId == null && t.Status != TicketStatus.Closed);
@@ -89,7 +94,7 @@ public static partial class Program
             });
         }
 
-        TableFormatter.PrintTable(queueFilterTitle,
+        TableFormatter.PrintPagedTable(queueFilterTitle,
             new[] { "Ticket#", "Status", "SLA State", "Priority", "Owner / Dispatcher", "Technician", "Customer", "Title" },
             rows,
             new[] { 10, 11, 12, 9, 18, 16, 20, 26 });
@@ -155,6 +160,9 @@ public static partial class Program
         bool isCoordinator = _currentUser.Role == UserRole.ServiceCoordinator;
         bool isVendorAdmin = _currentUser.Role == UserRole.VendorAdmin;
         bool isTech = _currentUser.Role == UserRole.Technician;
+        bool canReopenTicket = _currentUser.Role == UserRole.EndUser &&
+                               ticket.CanonicalCustomerId == _currentUser.CustomerId &&
+                               ticket.Status == TicketStatus.Closed;
 
         if (isCoordinator && !isOwner && !isUnowned)
         {
@@ -164,10 +172,10 @@ public static partial class Program
         bool canClaim = (isCoordinator || isSuperAdmin) && isUnowned;
         bool canTakeOver = isCoordinator && !isOwner && !isUnowned;
 
-        bool canUpdateStatus = isSuperAdmin || 
+        bool canUpdateStatus = ticket.Status != TicketStatus.Closed && (isSuperAdmin || 
                                (isTech && ticket.AssignedTechnicianId == _currentUser.Id) || 
                                (isVendorAdmin && (ticket.VendorId == _currentUser.VendorId || ticket.VendorId == null)) || 
-                               (isCoordinator && (isOwner || isUnowned));
+                               (isCoordinator && (isOwner || isUnowned)));
 
         bool canAssign = isSuperAdmin || 
                          isVendorAdmin || 
@@ -187,6 +195,10 @@ public static partial class Program
         {
             Console.WriteLine("[U] Update Status");
         }
+        if (canReopenTicket)
+        {
+            Console.WriteLine("[R] Reopen Ticket");
+        }
         if (canAssign)
         {
             Console.WriteLine("[A] Assign / Reassign Technician (Smart Matching)");
@@ -202,7 +214,7 @@ public static partial class Program
             bool isInternal = false;
             if (_currentUser.Role != UserRole.EndUser)
             {
-                isInternal = Prompt("Internal comment only? (y/n): ").Equals("y", StringComparison.OrdinalIgnoreCase);
+                isInternal = PromptYesNo("Internal comment only? (y/n): ");
             }
 
             CommentType cType = _currentUser.Role switch
@@ -280,15 +292,61 @@ public static partial class Program
 
             PrintSuccess($"Ticket ownership successfully transferred to {_currentUser.FirstName} {_currentUser.LastName}.");
         }
+        else if (act == "R" && canReopenTicket)
+        {
+            ticket.Status = ticket.AssignedTechnicianId.HasValue ? TicketStatus.Assigned : TicketStatus.Open;
+            ticket.ClosedAt = null;
+            ticket.ResolvedAt = null;
+            ticket.UpdatedAt = DateTime.UtcNow;
+
+            db.TicketComments.Add(new TicketComment
+            {
+                TicketId = ticket.Id,
+                AuthorUserId = _currentUser.Id,
+                CommentType = CommentType.StatusChange,
+                CommentText = $"Ticket reopened by customer {_currentUser.FirstName} {_currentUser.LastName}."
+            });
+
+            using var transaction = await db.Database.BeginTransactionAsync();
+            await db.SaveChangesAsync();
+            if (ticket.AssignedTechnicianId is int technicianId)
+            {
+                await RefreshTechnicianAvailabilityAsync(db, technicianId);
+            }
+            await transaction.CommitAsync();
+            PrintSuccess($"Ticket '{ticket.TicketNumber}' has been reopened.");
+        }
         else if (act == "U" && canUpdateStatus)
         {
             Console.WriteLine($"Current Status: {ticket.Status}");
             Console.WriteLine("Allowed progression: Open -> Assigned -> InProgress -> Resolved -> Closed");
-            Console.Write("Enter new status (Assigned, InProgress, Resolved, Closed): ");
+            bool canCloseTicket = _currentUser.Role is UserRole.ServiceCoordinator or UserRole.SuperAdmin;
+            string statusOptions = _currentUser.Role switch
+            {
+                UserRole.Technician => "InProgress, Resolved",
+                UserRole.ServiceCoordinator or UserRole.SuperAdmin => "Assigned, InProgress, Resolved, Closed",
+                _ => "Assigned, InProgress, Resolved"
+            };
+            Console.Write($"Enter new status ({statusOptions}): ");
             string? newStatusStr = Console.ReadLine()?.Trim();
 
-            if (Enum.TryParse<TicketStatus>(newStatusStr, true, out var newStatus))
+            if (!int.TryParse(newStatusStr, out _) &&
+                Enum.TryParse<TicketStatus>(newStatusStr, true, out var newStatus) &&
+                Enum.IsDefined(typeof(TicketStatus), newStatus))
             {
+                if (newStatus == TicketStatus.Closed && !canCloseTicket)
+                {
+                    PrintError("Only a Service Coordinator or Super Admin can close a ticket.");
+                    return;
+                }
+
+                if (_currentUser.Role == UserRole.Technician &&
+                    newStatus is not (TicketStatus.InProgress or TicketStatus.Resolved))
+                {
+                    PrintError("Technicians may only move tickets to InProgress or Resolved.");
+                    return;
+                }
+
                 bool validMove = (ticket.Status == TicketStatus.Open && newStatus == TicketStatus.Assigned) ||
                                  (ticket.Status == TicketStatus.Assigned && newStatus == TicketStatus.InProgress) ||
                                  (ticket.Status == TicketStatus.InProgress && newStatus == TicketStatus.Resolved) ||
@@ -321,7 +379,13 @@ public static partial class Program
                     CommentText = $"Status updated to '{newStatus}' by {_currentUser.FirstName} {_currentUser.LastName} ({_currentUser.Role})."
                 });
 
+                using var transaction = await db.Database.BeginTransactionAsync();
                 await db.SaveChangesAsync();
+                if (ticket.AssignedTechnicianId is int technicianId)
+                {
+                    await RefreshTechnicianAvailabilityAsync(db, technicianId);
+                }
+                await transaction.CommitAsync();
                 PrintSuccess($"Ticket status updated to {newStatus}.");
             }
             else
@@ -332,6 +396,40 @@ public static partial class Program
         else if (act == "A" && canAssign)
         {
             await AssignTechnicianSmartWizard(db, ticket);
+        }
+        else if (act == "B")
+        {
+            return;
+        }
+        else
+        {
+            PrintError("Invalid or unavailable action. Choose one of the actions listed above.");
+        }
+    }
+
+    private static async Task RefreshTechnicianAvailabilityAsync(HvacDbContext db, int technicianId)
+    {
+        var technician = await db.Users.FirstOrDefaultAsync(u =>
+            u.Id == technicianId && u.Role == UserRole.Technician);
+        if (technician == null)
+        {
+            return;
+        }
+
+        bool hasActiveJob = await db.ServiceTickets.AnyAsync(t =>
+            t.AssignedTechnicianId == technicianId &&
+            (t.Status == TicketStatus.Assigned || t.Status == TicketStatus.InProgress));
+
+        var expectedAvailability = hasActiveJob
+            ? TechnicianAvailability.OnJob
+            : technician.AvailabilityStatus == TechnicianAvailability.OnJob
+                ? TechnicianAvailability.Available
+                : technician.AvailabilityStatus;
+
+        if (technician.AvailabilityStatus != expectedAvailability)
+        {
+            technician.AvailabilityStatus = expectedAvailability;
+            await db.SaveChangesAsync();
         }
     }
 
@@ -405,46 +503,101 @@ public static partial class Program
             new[] { 6, 18, 24, 24, 13, 12 });
 
         string chosenIdStr = Prompt("\nEnter Technician ID to assign (or press ENTER to cancel): ");
-        if (int.TryParse(chosenIdStr, out int chosenId))
+        if (string.IsNullOrWhiteSpace(chosenIdStr)) return;
+        if (!int.TryParse(chosenIdStr, out int chosenId))
         {
-            var chosenTech = rankedTechs.FirstOrDefault(t => t.Id == chosenId);
-            if (chosenTech != null)
+            PrintError("Enter a valid technician ID, or press ENTER to cancel.");
+            return;
+        }
+
+        var chosenTech = rankedTechs.FirstOrDefault(t => t.Id == chosenId);
+        if (chosenTech != null)
+        {
+            int? previousTechnicianId = ticket.AssignedTechnicianId;
+            using var transaction = await db.Database.BeginTransactionAsync();
+            bool customerVendorLinkCreated = false;
+
+            if (chosenTech.VendorId is int vendorId)
             {
-                ticket.AssignedTechnicianId = chosenTech.Id;
-                ticket.VendorId = chosenTech.VendorId; // Ticket's vendor becomes that technician's vendor!
-                ticket.AssignedByUserId = _currentUser.Id;
-                ticket.AssignedAt = DateTime.UtcNow;
-
-                // Auto-claim ticket if coordinator assigns on an unowned ticket
-                if (_currentUser.Role == UserRole.ServiceCoordinator && ticket.OwnerCoordinatorId == null)
+                bool customerHasVendorAccount = await db.BrandCustomerAccounts
+                    .AnyAsync(account => account.CanonicalCustomerId == ticket.CanonicalCustomerId);
+                if (!customerHasVendorAccount)
                 {
-                    ticket.OwnerCoordinatorId = _currentUser.Id;
-                    ticket.ClaimedAt = DateTime.UtcNow;
-                    ticket.OwnerCoordinator = _currentUser;
+                    var customer = await db.CanonicalCustomers
+                        .FirstOrDefaultAsync(item => item.Id == ticket.CanonicalCustomerId);
+                    if (customer == null)
+                    {
+                        await transaction.RollbackAsync();
+                        PrintError("The ticket's customer could not be found. Technician assignment was not saved.");
+                        return;
+                    }
+
+                    string localAccountNumber = $"SELF-{customer.CanonicalCode}";
+                    if (await db.BrandCustomerAccounts.AnyAsync(account =>
+                            account.VendorId == vendorId && account.LocalAccountNumber == localAccountNumber))
+                    {
+                        localAccountNumber = $"SELF-{Guid.NewGuid():N}";
+                    }
+
+                    db.BrandCustomerAccounts.Add(new BrandCustomerAccount
+                    {
+                        CanonicalCustomerId = customer.Id,
+                        VendorId = vendorId,
+                        LocalAccountNumber = localAccountNumber,
+                        LocalCustomerName = customer.CustomerName,
+                        ContactEmail = customer.PrimaryContactEmail,
+                        ContactPhone = customer.PrimaryContactPhone,
+                        BillingAddress = customer.BillingAddress,
+                        AccountStatus = "Active",
+                        SourceSystem = "FirstTicketAssignment"
+                    });
+                    customerVendorLinkCreated = true;
                 }
-
-                if (ticket.Status == TicketStatus.Open)
-                {
-                    ticket.Status = TicketStatus.Assigned;
-                }
-                ticket.RespondedAt ??= DateTime.UtcNow;
-                ticket.UpdatedAt = DateTime.UtcNow;
-
-                db.TicketComments.Add(new TicketComment
-                {
-                    TicketId = ticket.Id,
-                    AuthorUserId = _currentUser.Id,
-                    CommentType = CommentType.Assignment,
-                    CommentText = $"Assigned to {chosenTech.FirstName} {chosenTech.LastName} ({chosenTech.Vendor?.BrandName ?? "Independent"}) by {_currentUser.FirstName} {_currentUser.LastName}."
-                });
-
-                await db.SaveChangesAsync();
-                PrintSuccess($"Ticket {ticket.TicketNumber} assigned to {chosenTech.FirstName} {chosenTech.LastName} ({chosenTech.Vendor?.BrandName}).");
             }
-            else
+
+            ticket.AssignedTechnicianId = chosenTech.Id;
+            ticket.VendorId = chosenTech.VendorId; // Ticket's vendor becomes that technician's vendor!
+            ticket.AssignedByUserId = _currentUser.Id;
+            ticket.AssignedAt = DateTime.UtcNow;
+
+            // Auto-claim ticket if coordinator assigns on an unowned ticket
+            if (_currentUser.Role == UserRole.ServiceCoordinator && ticket.OwnerCoordinatorId == null)
             {
-                PrintError($"Technician ID {chosenId} was not found.");
+                ticket.OwnerCoordinatorId = _currentUser.Id;
+                ticket.ClaimedAt = DateTime.UtcNow;
+                ticket.OwnerCoordinator = _currentUser;
             }
+
+            if (ticket.Status == TicketStatus.Open)
+            {
+                ticket.Status = TicketStatus.Assigned;
+            }
+            ticket.RespondedAt ??= DateTime.UtcNow;
+            ticket.UpdatedAt = DateTime.UtcNow;
+
+            db.TicketComments.Add(new TicketComment
+            {
+                TicketId = ticket.Id,
+                AuthorUserId = _currentUser.Id,
+                CommentType = CommentType.Assignment,
+                CommentText = $"Assigned to {chosenTech.FirstName} {chosenTech.LastName} ({chosenTech.Vendor?.BrandName ?? "Independent"}) by {_currentUser.FirstName} {_currentUser.LastName}."
+            });
+
+            await db.SaveChangesAsync();
+            if (previousTechnicianId is int oldTechnicianId && oldTechnicianId != chosenTech.Id)
+            {
+                await RefreshTechnicianAvailabilityAsync(db, oldTechnicianId);
+            }
+            await RefreshTechnicianAvailabilityAsync(db, chosenTech.Id);
+            await transaction.CommitAsync();
+            string vendorLinkMessage = customerVendorLinkCreated
+                ? $" Customer linked to {chosenTech.Vendor?.BrandName}."
+                : string.Empty;
+            PrintSuccess($"Ticket {ticket.TicketNumber} assigned to {chosenTech.FirstName} {chosenTech.LastName} ({chosenTech.Vendor?.BrandName}).{vendorLinkMessage}");
+        }
+        else
+        {
+            PrintError($"Technician ID {chosenId} was not found.");
         }
     }
 
@@ -508,15 +661,24 @@ public static partial class Program
         string desc = PromptValidated("Description / Fault code: ", val => InputValidator.ValidateRequiredText(val, "Description", 5, 2000));
 
         Console.WriteLine("Priority: 1. Critical (4h SLA) | 2. High (8h SLA) | 3. Medium (24h SLA) | 4. Low (48h SLA)");
-        string pChoice = Prompt("Select Priority [1-4]: ");
-
-        TicketPriority priority = pChoice switch
+        TicketPriority priority;
+        while (true)
         {
-            "1" => TicketPriority.Critical,
-            "2" => TicketPriority.High,
-            "4" => TicketPriority.Low,
-            _ => TicketPriority.Medium
-        };
+            string pChoice = Prompt("Select Priority [1-4]: ");
+            if (int.TryParse(pChoice, out int priorityChoice) && priorityChoice is >= 1 and <= 4)
+            {
+                TicketPriority[] priorities =
+                {
+                    TicketPriority.Critical,
+                    TicketPriority.High,
+                    TicketPriority.Medium,
+                    TicketPriority.Low
+                };
+                priority = priorities[priorityChoice - 1];
+                break;
+            }
+            PrintError("Select a ticket priority from 1 to 4.");
+        }
 
         var (respTime, resTime) = SlaCalculator.GetDefaultDurations(priority);
         string ticketNumber = $"TKT-{new Random().Next(2500, 9999)}";

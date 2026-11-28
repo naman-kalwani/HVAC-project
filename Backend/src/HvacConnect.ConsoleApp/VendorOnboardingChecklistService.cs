@@ -42,7 +42,7 @@ internal static class VendorOnboardingChecklistService
     public static async Task EnsureSchemaAndTemplatesAsync(HvacDbContext db)
     {
         await db.Database.ExecuteSqlRawAsync(
-            "ALTER TABLE public.vendor_onboarding_checklists ADD COLUMN IF NOT EXISTS task_code character varying(50);");
+            $"ALTER TABLE \"{HvacDbContext.SchemaName}\".vendor_onboarding_checklists ADD COLUMN IF NOT EXISTS task_code character varying(50);");
 
         var untagged = await db.VendorOnboardingChecklists
             .Where(item => item.TaskCode == null)
@@ -189,7 +189,9 @@ internal static class VendorOnboardingChecklistService
 
         foreach (var item in items)
         {
-            if (!complete && item.IsCompleted) continue;
+            // Automatic milestones mirror current database evidence, so they must be
+            // able to reopen when a later import or duplicate review invalidates it.
+            if (item.IsCompleted == complete) continue;
             item.IsCompleted = complete;
             item.CompletedByUserId = complete ? actorUserId : null;
             item.CompletedAt = complete ? DateTime.UtcNow : null;

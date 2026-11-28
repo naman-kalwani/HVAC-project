@@ -38,7 +38,7 @@ public static partial class Program
         string state = PromptValidated("State (2-letter code, e.g. CA, NY): ", val => InputValidator.ValidateRequiredText(val, "State", 2, 20));
         string zip = PromptValidated("Postal Code: ", val => InputValidator.ValidateRequiredText(val, "Postal Code", 4, 15));
         string accessNotes = Prompt("Technician Access Instructions: ");
-        string contactName = Prompt("On-Site Contact Name: ");
+        string contactName = PromptValidated("On-Site Contact Name: ", val => InputValidator.ValidateRequiredText(val, "On-Site Contact Name", 2, 100));
         string contactPhone = PromptValidated("On-Site Contact Phone (10 digits): ", InputValidator.ValidatePhone);
 
         string siteCode = $"LOC-{new Random().Next(10000, 99999)}";
@@ -90,7 +90,7 @@ public static partial class Program
             c.Status.ToString()
         }).ToList();
 
-        TableFormatter.PrintTable("Canonical Customer Registry",
+        TableFormatter.PrintPagedTable("Canonical Customer Registry",
             new[] { "Customer Code", "Customer Name", "Type", "Sites", "Primary Email", "Status" },
             rows,
             new[] { 15, 26, 14, 8, 26, 10 });
@@ -110,6 +110,11 @@ public static partial class Program
         {
             query = query.Where(s => s.CanonicalCustomerId == _currentUser.CustomerId);
         }
+        else if (_currentUser.Role == UserRole.Technician)
+        {
+            query = query.Where(s => db.ServiceTickets.Any(t =>
+                t.SiteLocationId == s.Id && t.AssignedTechnicianId == _currentUser.Id));
+        }
 
         var sites = await query.ToListAsync();
         var rows = sites.Select(s => new string[]
@@ -121,7 +126,7 @@ public static partial class Program
             s.PrimaryVendor?.BrandName ?? "Unassigned"
         }).ToList();
 
-        TableFormatter.PrintTable("Site Locations & Facilities",
+        TableFormatter.PrintPagedTable("Site Locations & Facilities",
             new[] { "Site Code", "Site Name", "Address", "Customer", "Vendor" },
             rows,
             new[] { 12, 24, 30, 22, 20 });
@@ -141,6 +146,11 @@ public static partial class Program
         {
             query = query.Where(a => a.SiteLocation != null && a.SiteLocation.CanonicalCustomerId == _currentUser.CustomerId);
         }
+        else if (_currentUser.Role == UserRole.Technician)
+        {
+            query = query.Where(a => db.ServiceTickets.Any(t =>
+                t.AssetEquipmentId == a.Id && t.AssignedTechnicianId == _currentUser.Id));
+        }
 
         var assets = await query.ToListAsync();
         var rows = assets.Select(a => new string[]
@@ -154,7 +164,7 @@ public static partial class Program
             a.SiteLocation?.SiteName ?? "N/A"
         }).ToList();
 
-        TableFormatter.PrintTable("HVAC & Commercial Refrigeration Equipment",
+        TableFormatter.PrintPagedTable("HVAC & Commercial Refrigeration Equipment",
             new[] { "ID", "Asset Tag", "Category", "Manufacturer", "Model", "Serial#", "Location Site" },
             rows,
             new[] { 6, 14, 20, 16, 18, 16, 24 });
@@ -205,15 +215,26 @@ public static partial class Program
         }
 
         Console.WriteLine("Category: 1. RooftopUnit | 2. Chiller | 3. Boiler | 4. WalkInCoolerFreezer | 5. RefrigerationRack");
-        string catChoice = Prompt("Select Category [1-5]: ");
-        AssetCategory category = catChoice switch
+        int categoryChoice;
+        while (true)
         {
-            "2" => AssetCategory.Chiller,
-            "3" => AssetCategory.Boiler,
-            "4" => AssetCategory.WalkInCoolerFreezer,
-            "5" => AssetCategory.RefrigerationRack,
-            _ => AssetCategory.RooftopUnit
+            string catChoice = Prompt("Select Category [1-5]: ");
+            if (int.TryParse(catChoice, out categoryChoice) && categoryChoice is >= 1 and <= 5)
+            {
+                break;
+            }
+
+            PrintError("Select an equipment category from 1 to 5.");
+        }
+        AssetCategory[] categories =
+        {
+            AssetCategory.RooftopUnit,
+            AssetCategory.Chiller,
+            AssetCategory.Boiler,
+            AssetCategory.WalkInCoolerFreezer,
+            AssetCategory.RefrigerationRack
         };
+        AssetCategory category = categories[categoryChoice - 1];
 
         string mfr = PromptValidated("Manufacturer (OEM brand): ", val => InputValidator.ValidateRequiredText(val, "Manufacturer", 2, 100));
         string model = Prompt("Model Number: ");

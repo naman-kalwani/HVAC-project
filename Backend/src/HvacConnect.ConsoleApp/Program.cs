@@ -75,7 +75,7 @@ public static partial class Program
         catch (Exception ex)
         {
             PrintError($"Could not connect to PostgreSQL database: {ex.Message}");
-            Console.WriteLine("Make sure PostgreSQL is running on localhost:5432 and credentials match appsettings.json.");
+            Console.WriteLine("Check that PostgreSQL is running and the host, port, database, and credentials in appsettings.json are correct.");
             return;
         }
 
@@ -98,7 +98,7 @@ public static partial class Program
         Console.WriteLine(@"
 ╔═════════════════════════════════════════════════════════════════════════╗
 ║     HVAC CONNECT — COMMERCIAL HVAC & REFRIGERATION CONSOLE PLATFORM     ║
-║        [Phase 1: Direct Database Service Layer & Operations]            ║
+║                                                                         ║
 ╚═════════════════════════════════════════════════════════════════════════╝");
         Console.ResetColor();
     }
@@ -177,6 +177,7 @@ public static partial class Program
                 menu.Add("8", new MenuOption { Title = "Add Technician to Local Vendor Roster", Handler = AddTechnicianWizard });
                 menu.Add("9", new MenuOption { Title = "Raise New Service Ticket for Vendor", Handler = CreateTicketWizard });
                 menu.Add("10", new MenuOption { Title = "Register Equipment Asset at Serviced Site", Handler = CreateAssetWizard });
+                menu.Add("11", new MenuOption { Title = "Add Service Coordinator to Local Vendor", Handler = AddServiceCoordinatorWizard });
                 break;
 
             case UserRole.ServiceCoordinator:

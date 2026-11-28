@@ -117,11 +117,11 @@ public static partial class Program
         Console.WriteLine("\n═══════ CUSTOMER SIGN-UP (END USER) ═══════");
         Console.WriteLine("Creates an active End User account linked with a new canonical customer profile.");
 
-        string firstName = PromptValidated("First Name: ", val => InputValidator.ValidateRequiredText(val, "First Name", 2, 75));
-        string lastName = PromptValidated("Last Name: ", val => InputValidator.ValidateRequiredText(val, "Last Name", 2, 75));
+        string firstName = PromptValidated("First Name: ", val => InputValidator.ValidatePersonName(val, "First Name"));
+        string lastName = PromptValidated("Last Name: ", val => InputValidator.ValidatePersonName(val, "Last Name"));
         string email = PromptValidated("Work Email: ", InputValidator.ValidateEmail);
         string password = PromptValidated("Password (min 8 chars, Upper, Lower, Digit, Special): ", InputValidator.ValidatePassword);
-        string companyName = PromptValidated("Organization / Customer Legal Name: ", val => InputValidator.ValidateRequiredText(val, "Organization Name", 2, 200));
+        string companyName = PromptValidated("Facility / Customer Legal Name: ", val => InputValidator.ValidateOrganizationName(val, "Facility / Customer Legal Name", 2, 200));
         string address = PromptValidated("Billing Address: ", val => InputValidator.ValidateRequiredText(val, "Billing Address", 5, 255));
 
         bool emailExists = await db.Users.AnyAsync(u => u.Email.ToLower() == email.ToLower());

@@ -4,6 +4,34 @@ namespace HvacConnect.ConsoleApp;
 
 public static class TableFormatter
 {
+    public static void PrintPagedTable(string title, string[] headers, List<string[]> rows, int[]? customWidths = null, int pageSize = 20)
+    {
+        if (pageSize < 1) throw new ArgumentOutOfRangeException(nameof(pageSize));
+
+        if (rows == null || rows.Count == 0)
+        {
+            PrintTable(title, headers, rows ?? new List<string[]>(), customWidths);
+            return;
+        }
+
+        int page = 0;
+        int pageCount = (int)Math.Ceiling(rows.Count / (double)pageSize);
+        while (true)
+        {
+            var pageRows = rows.Skip(page * pageSize).Take(pageSize).ToList();
+            PrintTable($"{title} — Page {page + 1} of {pageCount}", headers, pageRows, customWidths);
+            Console.WriteLine($"Showing {page * pageSize + 1}-{page * pageSize + pageRows.Count} of {rows.Count}");
+            Console.WriteLine("N) Next page   P) Previous page   B) Back");
+            Console.Write("Choice: ");
+            string? choice = Console.ReadLine()?.Trim();
+
+            if (string.IsNullOrEmpty(choice) || choice.Equals("B", StringComparison.OrdinalIgnoreCase)) return;
+            if (choice.Equals("N", StringComparison.OrdinalIgnoreCase) && page + 1 < pageCount) page++;
+            else if (choice.Equals("P", StringComparison.OrdinalIgnoreCase) && page > 0) page--;
+            else Console.WriteLine("Enter N, P, or B.");
+        }
+    }
+
     public static void PrintTable(string title, string[] headers, List<string[]> rows, int[]? customWidths = null)
     {
         Console.ForegroundColor = ConsoleColor.Cyan;

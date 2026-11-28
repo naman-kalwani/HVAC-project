@@ -88,9 +88,15 @@ public static partial class Program
             (index + 1).ToString(), vendor.VendorCode, vendor.BrandName,
             vendor.OnboardingPhase.ToString(), vendor.Status.ToString()
         }).ToList();
-        TableFormatter.PrintTable("Vendor Onboarding", new[] { "#", "Vendor Code", "Vendor", "Phase", "Status" }, rows, new[] { 4, 14, 28, 20, 18 });
+        TableFormatter.PrintPagedTable("Vendor Onboarding", new[] { "#", "Vendor Code", "Vendor", "Phase", "Status" }, rows, new[] { 4, 14, 28, 20, 18 });
 
-        if (!int.TryParse(Prompt($"Select vendor to manage [1-{vendors.Count}] (0 to return): "), out int choice) || choice == 0) return;
+        string vendorChoice = Prompt($"Select vendor to manage [1-{vendors.Count}] (0 to return): ");
+        if (!int.TryParse(vendorChoice, out int choice))
+        {
+            PrintError("Enter a valid vendor number, or 0 to return.");
+            return;
+        }
+        if (choice == 0) return;
         if (choice < 1 || choice > vendors.Count) { PrintError("Invalid vendor selection."); return; }
         await ManageVendorChecklist(db, vendors[choice - 1]);
     }
@@ -109,15 +115,17 @@ public static partial class Program
             var rows = tasks.Select(item => new[]
             {
                 item.Id.ToString(), item.Phase,
+                VendorOnboardingChecklistService.IsAutomatic(item.TaskCode) ? "Auto" : "Manual",
                 item.IsCompleted ? "Completed" : "Pending",
                 item.TaskDescription,
                 item.CompletedByUserId.HasValue && users.TryGetValue(item.CompletedByUserId.Value, out var by) ? by : "-"
             }).ToList();
-            TableFormatter.PrintTable($"{vendor.BrandName} Onboarding Checklist", new[] { "ID", "Phase", "Status", "Milestone", "Verified By" }, rows, new[] { 6, 10, 12, 54, 22 });
+            TableFormatter.PrintTable($"{vendor.BrandName} Onboarding Checklist", new[] { "ID", "Phase", "Mode", "Status", "Milestone", "Verified By" }, rows, new[] { 6, 10, 8, 12, 48, 22 });
 
             var phase1 = tasks.Where(item => item.Phase == "Phase 1").ToList();
             var phase2 = tasks.Where(item => item.Phase == "Phase 2").ToList();
             Console.WriteLine($"Phase 1: {phase1.Count(item => item.IsCompleted)}/{phase1.Count} complete | Phase 2: {phase2.Count(item => item.IsCompleted)}/{phase2.Count} complete");
+            Console.WriteLine("Auto items follow import and duplicate-review data; Manual items require Super Admin confirmation.");
             Console.WriteLine("[C] Complete / reopen manual item  [A] Add item  [E] Edit item text  [D] Remove pending custom item");
             Console.WriteLine("[P] Approve Phase 1 and activate Phase 2  [F] Mark Fully Unified  [0] Back");
             switch (Prompt("Checklist action: ").Trim().ToUpperInvariant())

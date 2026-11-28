@@ -34,6 +34,11 @@ public static partial class Program
             return;
         }
 
+        foreach (var technician in techs)
+        {
+            await RefreshTechnicianAvailabilityAsync(db, technician.Id);
+        }
+
         var rows = techs.Select(t => new string[]
         {
             t.Id.ToString(),
@@ -44,26 +49,32 @@ public static partial class Program
             t.AvailabilityStatus.ToString()
         }).ToList();
 
-        TableFormatter.PrintTable("Available Technicians", 
+        TableFormatter.PrintPagedTable("Available Technicians", 
             new[] { "ID", "Name", "Code", "Specialisation", "Vendor", "Duty Status" }, rows);
 
         string tChoice = Prompt("\nEnter Technician ID to view schedule (or ENTER to cancel): ");
-        if (int.TryParse(tChoice, out int techId))
+        if (string.IsNullOrWhiteSpace(tChoice)) return;
+        if (!int.TryParse(tChoice, out int techId))
         {
-            var targetTech = techs.FirstOrDefault(t => t.Id == techId);
-            if (targetTech != null)
-            {
-                await RenderTechnicianSchedule(db, targetTech);
-            }
-            else
-            {
-                PrintError($"Technician with ID {techId} was not found.");
-            }
+            PrintError("Enter a valid technician ID, or press ENTER to cancel.");
+            return;
+        }
+
+        var targetTech = techs.FirstOrDefault(t => t.Id == techId);
+        if (targetTech != null)
+        {
+            await RenderTechnicianSchedule(db, targetTech);
+        }
+        else
+        {
+            PrintError($"Technician with ID {techId} was not found.");
         }
     }
 
     private static async Task RenderTechnicianSchedule(HvacDbContext db, User tech)
     {
+        await RefreshTechnicianAvailabilityAsync(db, tech.Id);
+
         Console.ForegroundColor = ConsoleColor.Cyan;
         Console.WriteLine($"\n═══════ TECHNICIAN PROFILE & JOB SCHEDULE ═══════");
         Console.ResetColor();
@@ -143,16 +154,16 @@ public static partial class Program
     private static async Task AddVendorWizard(HvacDbContext db)
     {
         Console.WriteLine("\n═══════ REGISTER NEW ACQUIRED CONTRACTOR (VENDOR) ═══════");
-        string brandName = PromptValidated("Brand Name (e.g. Pacific Climate Solutions): ", val => InputValidator.ValidateRequiredText(val, "Brand Name", 2, 150));
-        string legalName = Prompt("Legal Entity Name: ");
+        string brandName = PromptValidated("Brand Name (e.g. Pacific Climate Solutions): ", val => InputValidator.ValidateOrganizationName(val, "Brand Name", 2, 150));
+        string legalName = PromptValidated("Legal Entity Name: ", val => InputValidator.ValidateOrganizationName(val, "Legal Entity Name", 2, 200, required: false));
         string region = PromptValidated("Territory / Region (e.g. West Coast, Mid-Atlantic): ", val => InputValidator.ValidateRequiredText(val, "Region", 2, 100));
-        string contactName = Prompt("Primary Operations Contact Name: ");
+        string contactName = PromptValidated("Primary Operations Contact Name: ", val => InputValidator.ValidateContactName(val, "Primary Operations Contact Name", required: false));
         string email = PromptValidated("Primary Contact Email: ", InputValidator.ValidateEmail);
         string phone = PromptValidated("Primary Contact Phone (10 digits): ", InputValidator.ValidatePhone);
 
         Console.WriteLine("\nCreate the initial Vendor Admin login for this vendor:");
-        string adminFirstName = PromptValidated("Admin First Name: ", val => InputValidator.ValidateRequiredText(val, "First Name", 2, 75));
-        string adminLastName = PromptValidated("Admin Last Name: ", val => InputValidator.ValidateRequiredText(val, "Last Name", 2, 75));
+        string adminFirstName = PromptValidated("Admin First Name: ", val => InputValidator.ValidatePersonName(val, "First Name"));
+        string adminLastName = PromptValidated("Admin Last Name: ", val => InputValidator.ValidatePersonName(val, "Last Name"));
         string adminEmail = PromptValidated("Admin Login Email: ", InputValidator.ValidateEmail);
         string adminPassword = PromptValidated("Initial Password (min 8 chars, upper/lower/digit/special): ", InputValidator.ValidatePassword);
 
@@ -222,8 +233,8 @@ public static partial class Program
         { PrintError("Invalid vendor selection."); return; }
 
         var vendor = vendors[choice - 1];
-        string firstName = PromptValidated("Admin First Name: ", val => InputValidator.ValidateRequiredText(val, "First Name", 2, 75));
-        string lastName = PromptValidated("Admin Last Name: ", val => InputValidator.ValidateRequiredText(val, "Last Name", 2, 75));
+        string firstName = PromptValidated("Admin First Name: ", val => InputValidator.ValidatePersonName(val, "First Name"));
+        string lastName = PromptValidated("Admin Last Name: ", val => InputValidator.ValidatePersonName(val, "Last Name"));
         string email = PromptValidated("Admin Login Email: ", InputValidator.ValidateEmail);
         string password = PromptValidated("Initial Password (min 8 chars, upper/lower/digit/special): ", InputValidator.ValidatePassword);
         if (await db.Users.AnyAsync(u => u.Email.ToLower() == email.ToLower()))
@@ -271,22 +282,29 @@ public static partial class Program
             vendorId = vendors[vIdx - 1].Id;
         }
 
-        string firstName = PromptValidated("First Name: ", val => InputValidator.ValidateRequiredText(val, "First Name", 2, 75));
-        string lastName = PromptValidated("Last Name: ", val => InputValidator.ValidateRequiredText(val, "Last Name", 2, 75));
+        string firstName = PromptValidated("First Name: ", val => InputValidator.ValidatePersonName(val, "First Name"));
+        string lastName = PromptValidated("Last Name: ", val => InputValidator.ValidatePersonName(val, "Last Name"));
         string email = PromptValidated("Work Email: ", InputValidator.ValidateEmail);
         string password = PromptValidated("Initial Password: ", InputValidator.ValidatePassword);
-        string empCode = Prompt("Employee Code (e.g. TECH-201): ");
+        string empCode = PromptValidated("Employee Code (e.g. TECH-201): ", InputValidator.ValidateEmployeeCode);
         string phone = PromptValidated("Dispatch Phone (10 digits): ", InputValidator.ValidatePhone);
 
         Console.WriteLine("Specialisation: 1. HVAC / Chillers | 2. Commercial Refrigeration | 3. Boilers & Heating | 4. General RTU");
-        string sChoice = Prompt("Select Specialisation [1-4]: ");
-        string spec = sChoice switch
+        string spec;
+        while (true)
         {
-            "1" => "HVAC / Chillers",
-            "2" => "Commercial Refrigeration",
-            "3" => "Boilers & Heating",
-            _ => "General RTU / HVAC"
-        };
+            string sChoice = Prompt("Select Specialisation [1-4]: ");
+            spec = sChoice switch
+            {
+                "1" => "HVAC / Chillers",
+                "2" => "Commercial Refrigeration",
+                "3" => "Boilers & Heating",
+                "4" => "General RTU / HVAC",
+                _ => string.Empty
+            };
+            if (spec.Length > 0) break;
+            PrintError("Select a specialisation from 1 to 4.");
+        }
 
         bool emailExists = await db.Users.AnyAsync(u => u.Email.ToLower() == email.ToLower());
         if (emailExists)
@@ -319,8 +337,65 @@ public static partial class Program
     private static async Task AddServiceCoordinatorWizard(HvacDbContext db)
     {
         Console.WriteLine("\n═══════ ADD NEW SERVICE COORDINATOR (DISPATCHER) ═══════");
-        string firstName = PromptValidated("First Name: ", val => InputValidator.ValidateRequiredText(val, "First Name", 2, 75));
-        string lastName = PromptValidated("Last Name: ", val => InputValidator.ValidateRequiredText(val, "Last Name", 2, 75));
+
+        int vendorId;
+        string vendorName;
+        if (_currentUser!.Role == UserRole.VendorAdmin)
+        {
+            if (_currentUser.VendorId is not int currentVendorId)
+            {
+                PrintError("Your Vendor Admin account is not associated with a vendor.");
+                return;
+            }
+
+            var vendor = await db.Vendors.FirstOrDefaultAsync(v => v.Id == currentVendorId && v.IsActive);
+            if (vendor == null)
+            {
+                PrintError("Your vendor is not active. A Service Coordinator cannot be created.");
+                return;
+            }
+
+            vendorId = vendor.Id;
+            vendorName = vendor.BrandName;
+        }
+        else if (_currentUser.Role == UserRole.SuperAdmin)
+        {
+            var vendors = await db.Vendors
+                .Where(v => v.IsActive && v.Status == VendorStatus.Active)
+                .OrderBy(v => v.BrandName)
+                .ToListAsync();
+            if (vendors.Count == 0)
+            {
+                PrintError("No active vendors are available to assign the Service Coordinator to.");
+                return;
+            }
+
+            Console.WriteLine("Select the vendor for this Service Coordinator:");
+            for (int i = 0; i < vendors.Count; i++)
+            {
+                Console.WriteLine($"{i + 1}. {vendors[i].BrandName} [{vendors[i].VendorCode}]");
+            }
+
+            if (!int.TryParse(Prompt($"Select vendor [1-{vendors.Count}]: "), out int vendorChoice) ||
+                vendorChoice < 1 ||
+                vendorChoice > vendors.Count)
+            {
+                PrintError("Invalid vendor selection. Service Coordinator was not created.");
+                return;
+            }
+
+            var selectedVendor = vendors[vendorChoice - 1];
+            vendorId = selectedVendor.Id;
+            vendorName = selectedVendor.BrandName;
+        }
+        else
+        {
+            PrintError("Only Super Admins and Vendor Admins can create Service Coordinators.");
+            return;
+        }
+
+        string firstName = PromptValidated("First Name: ", val => InputValidator.ValidatePersonName(val, "First Name"));
+        string lastName = PromptValidated("Last Name: ", val => InputValidator.ValidatePersonName(val, "Last Name"));
         string email = PromptValidated("Work Email: ", InputValidator.ValidateEmail);
         string password = PromptValidated("Initial Password: ", InputValidator.ValidatePassword);
         string phone = PromptValidated("Desk Phone (10 digits): ", InputValidator.ValidatePhone);
@@ -339,6 +414,7 @@ public static partial class Program
             Email = email,
             PasswordHash = PasswordService.HashPassword(password),
             Role = UserRole.ServiceCoordinator,
+            VendorId = vendorId,
             PhoneNumber = phone,
             IsActive = true
         };
@@ -346,7 +422,7 @@ public static partial class Program
         db.Users.Add(coord);
         await db.SaveChangesAsync();
 
-        PrintSuccess($"Service Coordinator '{firstName} {lastName}' created successfully!");
+        PrintSuccess($"Service Coordinator '{firstName} {lastName}' created for {vendorName}!");
     }
 
     private static async Task ListVendorsOnly(HvacDbContext db)
@@ -362,7 +438,7 @@ public static partial class Program
             v.Users.Count(u => u.Role == UserRole.Technician).ToString()
         }).ToList();
 
-        TableFormatter.PrintTable("Acquired Vendors",
+        TableFormatter.PrintPagedTable("Acquired Vendors",
             new[] { "Vendor Code", "Brand Name", "Territory / Region", "Status", "Onboarding Phase", "Field Techs" },
             rows,
             new[] { 13, 28, 22, 12, 18, 12 });
@@ -379,6 +455,11 @@ public static partial class Program
         }
 
         var staff = await query.OrderBy(u => u.Role).ThenBy(u => u.FirstName).ToListAsync();
+        foreach (var technician in staff.Where(s => s.Role == UserRole.Technician))
+        {
+            await RefreshTechnicianAvailabilityAsync(db, technician.Id);
+        }
+
         var rows = staff.Select(s => new string[]
         {
             s.Id.ToString(),
@@ -389,7 +470,7 @@ public static partial class Program
             s.AvailabilityStatus.ToString()
         }).ToList();
 
-        TableFormatter.PrintTable("Field Technicians & Service Coordinators",
+        TableFormatter.PrintPagedTable("Field Technicians & Service Coordinators",
             new[] { "ID", "Name", "Role", "Specialisation / Unit", "Vendor", "Duty Status" },
             rows,
             new[] { 6, 20, 18, 24, 24, 14 });

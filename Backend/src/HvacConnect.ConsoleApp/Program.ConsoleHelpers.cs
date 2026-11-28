@@ -45,4 +45,15 @@ public static partial class Program
             PrintError(errorMessage);
         }
     }
+
+    private static bool PromptYesNo(string label)
+    {
+        while (true)
+        {
+            string answer = Prompt(label);
+            if (answer.Equals("y", StringComparison.OrdinalIgnoreCase)) return true;
+            if (answer.Equals("n", StringComparison.OrdinalIgnoreCase)) return false;
+            PrintError("Enter Y or N.");
+        }
+    }
 }
