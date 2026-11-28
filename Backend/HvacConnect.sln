@@ -11,6 +11,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "HvacConnect.Infrastructure"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "HvacConnect.ConsoleApp", "src\HvacConnect.ConsoleApp\HvacConnect.ConsoleApp.csproj", "{771A09F6-0043-4A5E-9046-615FE8EBE499}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "HvacConnect.Api", "src\HvacConnect.Api\HvacConnect.Api.csproj", "{37399CE9-7A4F-4024-9344-64716B5C5F13}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -32,10 +34,15 @@ Global
 		{771A09F6-0043-4A5E-9046-615FE8EBE499}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{771A09F6-0043-4A5E-9046-615FE8EBE499}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{771A09F6-0043-4A5E-9046-615FE8EBE499}.Release|Any CPU.Build.0 = Release|Any CPU
+		{37399CE9-7A4F-4024-9344-64716B5C5F13}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{37399CE9-7A4F-4024-9344-64716B5C5F13}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{37399CE9-7A4F-4024-9344-64716B5C5F13}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{37399CE9-7A4F-4024-9344-64716B5C5F13}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(NestedProjects) = preSolution
 		{42312DB0-EF9E-4A07-BD20-CA092673CE04} = {05749FCE-2CE2-47B5-9278-2DFCBFE81B75}
 		{F1CB5E25-0B8B-4DDB-86E4-0DF413A3DEE0} = {05749FCE-2CE2-47B5-9278-2DFCBFE81B75}
 		{771A09F6-0043-4A5E-9046-615FE8EBE499} = {05749FCE-2CE2-47B5-9278-2DFCBFE81B75}
+		{37399CE9-7A4F-4024-9344-64716B5C5F13} = {05749FCE-2CE2-47B5-9278-2DFCBFE81B75}
 	EndGlobalSection
 EndGlobal

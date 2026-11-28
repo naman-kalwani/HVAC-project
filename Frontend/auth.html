@@ -203,6 +203,7 @@
     </div>
 
     <!-- SCRIPTS -->
+    <script src="js/api.js"></script>
     <script src="js/auth.js"></script>
     <script>
         // Elements
@@ -430,7 +431,7 @@
         });
 
         // Handle Login Submit
-        document.getElementById("loginForm").addEventListener("submit", function (e) {
+        document.getElementById("loginForm").addEventListener("submit", async function (e) {
             e.preventDefault();
             hideAlert();
 
@@ -457,7 +458,7 @@
 
 
             // const remember = document.getElementById("rememberMe").checked;
-            const res = Auth.login(email, pass, true);
+            const res = await Auth.login(email, pass, true);
             if (res.success) {
                 showAlert("Signed in successfully. Redirecting to your workspace...", true);
                 setTimeout(() => {
@@ -469,7 +470,7 @@
         });
 
         // Handle Signup Submit
-        document.getElementById("signupForm").addEventListener("submit", function (e) {
+        document.getElementById("signupForm").addEventListener("submit", async function (e) {
             e.preventDefault();
             hideAlert();
 
@@ -493,15 +494,13 @@
                 return;
             }
 
-            const newUser = Auth.signup(name, email, password);
-            console.log("A");
-            // App.showToast('sign up is successfull', 'success');
-            console.log("B");
-            alert("sign up is successfull");
-            setTimeout(() => {
-                console.log("C");
-                window.location.replace("auth.html");;
-            }, 6000);
+            const result = await Auth.signup(name, email, password);
+            if (!result.success) {
+                showAlert(result.error, false);
+                return;
+            }
+            showAlert("Account created successfully. Opening your workspace...", true);
+            setTimeout(() => window.location.replace("app.html"), 600);
         });
 
         // Handle Forgot Password Submit

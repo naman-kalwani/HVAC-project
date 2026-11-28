@@ -60,6 +60,14 @@ const DEMO_USERS = [
 ];
 
 const AUTH_STORAGE_KEY = "hvac_connect_current_user";
+const ROLE_KEYS = { SuperAdmin: "superadmin", VendorAdmin: "vendoradmin", ServiceCoordinator: "coordinator", Technician: "technician", EndUser: "enduser" };
+const ROLE_LABELS = { SuperAdmin: "Super Admin", VendorAdmin: "Vendor Admin", ServiceCoordinator: "Service Coordinator", Technician: "Technician", EndUser: "End User" };
+
+function toSessionUser(user) {
+    return { ...user, roleKey: ROLE_KEYS[user.role] || "enduser", role: ROLE_LABELS[user.role] || user.role,
+        avatar: (user.name || "U").split(" ").map(x => x[0]).join("").slice(0, 2).toUpperCase(),
+        workspace: user.vendorName || user.customerName || "Registered Client Facility" };
+}
 
 const Auth = {
     /**
@@ -76,10 +84,34 @@ const Auth = {
         }
     },
 
+    async refreshSession() {
+        const current = this.getCurrentUser();
+        if (!current || !window.HvacApi || !current.id) return current;
+        try {
+            const profile = await window.HvacApi.me(current.id);
+            const updated = toSessionUser(profile);
+            this.setSession(updated, localStorage.getItem(AUTH_STORAGE_KEY) !== null);
+            return updated;
+        } catch (error) {
+            this.clearSession();
+            return null;
+        }
+    },
+
     /**
      * Authenticate with email and password
      */
-    login(email, password, remember = false) {
+    async login(email, password, remember = false) {
+        if (window.HvacApi) {
+            try {
+                const result = await window.HvacApi.login(email, password);
+                const user = toSessionUser(result.user);
+                this.setSession(user, remember);
+                return { success: true, user };
+            } catch (error) {
+                return { success: false, error: error.message || "Unable to connect to the API." };
+            }
+        }
         const trimmedEmail = (email || "").trim().toLowerCase();
         const user = DEMO_USERS.find(u => u.email.toLowerCase() === trimmedEmail);
 
@@ -98,7 +130,17 @@ const Auth = {
     /**
      * Register a new user
      */
-    signup(name, email, password) {
+    async signup(name, email, password) {
+        if (window.HvacApi) {
+            try {
+                const result = await window.HvacApi.signup(name, email, password);
+                const user = toSessionUser(result.user);
+                this.setSession(user, false);
+                return { success: true, user };
+            } catch (error) {
+                return { success: false, error: error.message || "Unable to create account." };
+            }
+        }
         const initials = name.split(" ").map(p => p[0]).join("").toUpperCase().slice(0, 2) || "U";
 
         const newUser = {
@@ -117,7 +159,7 @@ const Auth = {
         this.setSession(newUser);App.showToast('Sign up successfull', 'success');
         window.location.replace("auth.html");
 
-        return newUser;
+        return { success: true, user: newUser };
     },
 
     /**
@@ -134,9 +176,13 @@ const Auth = {
      * Clear user session and redirect to login
      */
     logout() {
+        this.clearSession();
+        window.location.replace("index.html");
+    },
+
+    clearSession() {
         localStorage.removeItem(AUTH_STORAGE_KEY);
         sessionStorage.removeItem(AUTH_STORAGE_KEY);
-        window.location.replace("index.html");
     },
 
     /**

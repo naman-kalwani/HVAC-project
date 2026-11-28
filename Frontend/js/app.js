@@ -1497,8 +1497,8 @@ if (!refreshPagination("tickets", Store.tickets)) Router.loadCurrentPage();
   }
   
   /** Init */
-  function init() {
-    const user = Auth.getCurrentUser();
+  async function init() {
+    const user = await Auth.refreshSession();
     if (!user) {
       window.location.replace('index.html');
       return;
